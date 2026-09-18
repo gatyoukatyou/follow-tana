@@ -21,7 +21,7 @@ import { normalizeHandle } from "@/lib/utils";
 
 export type PullState = {
   status: "idle" | "waiting" | "running" | "done";
-  kind: "following" | "followers" | "unfollow";
+  kind: "following" | "followers" | "unfollow" | "scan";
   count: number;
 };
 

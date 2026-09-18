@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 import { useRoster } from "@/lib/roster-store";
 import { isValidHandle, normalizeHandle } from "@/lib/utils";
+import { parseScanProfiles } from "@/lib/x-scan-script";
 
 export function isAllowedXBridgeOrigin(origin: string, selfOrigin: string): boolean {
   return origin === "https://x.com" || origin === "https://twitter.com" || origin === selfOrigin;
@@ -22,13 +23,43 @@ export function useXBridge() {
         type?: string;
         op?: string;
         handles?: unknown;
+        profiles?: unknown;
         count?: number;
         expected?: number;
       };
       if (!d || d.source !== "follow-tana") return;
       if (!isAllowedXBridgeOrigin(e.origin, window.location.origin)) return;
-      const handles = parseXBridgeHandles(d.handles);
       const s = useRoster.getState();
+
+      if (d.op === "Scan") {
+        const snaps = parseScanProfiles(d.profiles);
+        if (snaps.length) s.mergeProfiles(snaps);
+        const n = Number(d.count) || snaps.length;
+        const exp = Number(d.expected) || 0;
+        s.setPull({
+          status: d.type === "done" ? "done" : "running",
+          kind: "scan",
+          count: n,
+        });
+        if (d.type === "done") {
+          toast.success(
+            n > 0
+              ? `Xで ${n.toLocaleString("ja-JP")} 人の生存確認が終わりました`
+              : "生存確認が終わりました",
+            { id: "x-scan" },
+          );
+        } else {
+          toast.loading(
+            exp > 0
+              ? `Xで調べています… ${n.toLocaleString("ja-JP")} / ${exp.toLocaleString("ja-JP")}人`
+              : `Xで調べています… ${n.toLocaleString("ja-JP")}人`,
+            { id: "x-scan" },
+          );
+        }
+        return;
+      }
+
+      const handles = parseXBridgeHandles(d.handles);
       const n = handles.length || Number(d.count) || 0;
       if (d.op === "Unfollow") {
         if (handles.length) s.removePeople(handles);

@@ -27,6 +27,7 @@ import { Mark } from "@/components/mark";
 import { OwnerDialog } from "@/components/owner-dialog";
 import { PersonAvatar } from "@/components/person-avatar";
 import { PersonSheet } from "@/components/person-sheet";
+import { ScanDialog } from "@/components/scan-dialog";
 import { TagDialog } from "@/components/tag-dialog";
 import { UnfollowDialog } from "@/components/unfollow-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -52,10 +53,9 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   applyFilters,
-  countToScan,
+  peopleToScan,
   queryTokens,
   rosterStats,
-  scanEtaLabel,
   sortPeople,
   uniqueTags,
 } from "@/lib/filter-sort";
@@ -264,6 +264,7 @@ export function FollowDesk() {
   const [crossOpen, setCrossOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
   const [unfollowOpen, setUnfollowOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -297,7 +298,8 @@ export function FollowDesk() {
     [people, filters, tokens, sort],
   );
   const virtualize = visible.length > VIRTUALIZE_AFTER;
-  const scanCount = useMemo(() => countToScan(people, selected), [people, selected]);
+  const scanPeople = useMemo(() => peopleToScan(people, selected), [people, selected]);
+  const scanCount = scanPeople.length;
 
   const virtualizer = useVirtualizer({
     count: virtualize ? visible.length : 0,
@@ -573,7 +575,7 @@ export function FollowDesk() {
                 variant="secondary"
                 size="sm"
                 disabled={people.length === 0 || scanCount === 0}
-                onClick={() => void runEnrich()}
+                onClick={() => setScanOpen(true)}
               >
                 <Activity className="size-3.5" />
                 {selected.length > 0 ? "選択を生存確認" : "生存確認"} {scanCount.toLocaleString("ja-JP")}
@@ -656,8 +658,7 @@ export function FollowDesk() {
             </div>
           ) : stats.unknown > 0 ? (
             <p className="text-[12px] text-pretty text-muted-foreground">
-              最終投稿が未確認の {stats.unknown.toLocaleString("ja-JP")} 人です。上の「生存確認」を押すと調べます。
-              待っているだけでは進みません。全員だと{scanEtaLabel(stats.unknown)}かかることがあります。完了すると案内が出ます。
+              最終投稿が未確認の {stats.unknown.toLocaleString("ja-JP")} 人です。上の「生存確認」から、Xでまとめて調べてください。待っているだけでは進みません。
             </p>
           ) : null}
         </div>
@@ -672,7 +673,7 @@ export function FollowDesk() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => void runEnrich()}
+              onClick={() => setScanOpen(true)}
               disabled={enriching || scanCount === 0}
             >
               {enriching ? "確認中" : "生存確認"}
@@ -781,6 +782,14 @@ export function FollowDesk() {
           people={selectedPeople}
           ownerHandle={ownerHandle}
           onNeedOwner={() => setOwnerOpen(true)}
+        />
+        <ScanDialog
+          open={scanOpen}
+          onOpenChange={setScanOpen}
+          people={scanPeople}
+          ownerHandle={ownerHandle}
+          onNeedOwner={() => setOwnerOpen(true)}
+          onLocalScan={() => void runEnrich()}
         />
         <AddPersonDialog
           open={addOpen}

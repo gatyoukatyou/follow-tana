@@ -117,6 +117,12 @@ function needsScan(p: Person): boolean {
   return scanRank(p) < SCAN_RANK_SKIP;
 }
 
+export function peopleToScan(people: Person[], selected: string[]): Person[] {
+  const sel = new Set(selected.map((h) => h.toLowerCase()));
+  const pool = selected.length > 0 ? people.filter((p) => sel.has(p.handle.toLowerCase())) : people;
+  return pool.filter(needsScan);
+}
+
 export function handlesToScan(
   people: Person[],
   selected: string[],
