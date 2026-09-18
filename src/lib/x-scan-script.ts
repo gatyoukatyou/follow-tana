@@ -150,6 +150,52 @@ const SCAN = `(() => {
     } catch (e) {}
     return null;
   };
+  // APIが全滅したときの最後の手段：開いている一覧ページのDOMから直接読む。
+  // UserCell には名前と（鍵以外は）自己紹介まで入る。最終投稿日は取れないので、
+  // 「存在する人」を生存寄りとして記録する。
+  const cellSeen = {};
+  const fromDomCells = (max) => {
+    let n = 0;
+    document.querySelectorAll('[data-testid="UserCell"]').forEach((cell) => {
+      if (n >= max) return;
+      const a = cell.querySelector('a[href^="/"]');
+      if (!a) return;
+      const m = String(a.getAttribute("href") || "").match(/^\\/([A-Za-z0-9_]{1,15})(?:$|[/?#])/);
+      if (!m) return;
+      const h = m[1];
+      const k = h.toLowerCase();
+      if (cellSeen[k]) return;
+      cellSeen[k] = 1;
+      const nameEl = cell.querySelector('span:not([data-testid])');
+      const text = String(cell.textContent || "");
+      const row = { h: h, n: h, av: "", fl: 0, fg: 0, tc: 0, vf: false, k: false, j: null, lp: null, lt: "" };
+      if (text.includes("さんはフォローしました") || text.includes("Follows you")) row.y = 1;
+      profiles.push ? null : null;
+      n += 1;
+      domRows.push(row);
+    });
+    return n;
+  };
+  const domRows = [];
+  window.__ftDomRows = domRows;
+  const domScan = async () => {
+    // 一覧を下までスクロールしながらDOMに現れた人を記録する。
+    let idle = 0;
+    let lastLen = 0;
+    const t0 = Date.now();
+    while (idle < 6 && Date.now() - t0 < 8 * 60 * 1000) {
+      await waitVisible();
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      const col = document.querySelector('[data-testid="primaryColumn"]');
+      if (col) col.scrollTop = col.scrollHeight;
+      await sleep(600);
+      fromDomCells(999999);
+      if (domRows.length === lastLen) idle += 1;
+      else { idle = 0; lastLen = domRows.length; }
+      send("progress", domRows.slice(-BATCH));
+    }
+    return domRows.length;
+  };
   (async () => {
     const BATCH = 20;
     let found = 0;
@@ -217,9 +263,17 @@ const SCAN = `(() => {
     send("done", []);
     if (found > 0 || done === 0) {
       alert("フォロー棚: " + handles.length + "人の生存確認が終わりました。見つからなかった人は未確認のままです。元のタブに戻ってください。");
-    } else {
-      alert("フォロー棚: 最終投稿を取れませんでした。Xが一括取得と個別取得の両方を止めています。時間をおいて、もう一度コードを貼ってください。名簿は未確認のまま残しています。");
+      return;
     }
+    // APIが全滅した場合：一覧ページのDOMから「存在する人」を読む（最終投稿日は取れない）。
+    const domCount = await domScan();
+    if (domCount > 0) {
+      send("progress", domRows.slice());
+      send("done", []);
+      alert("フォロー棚: APIをXに止められたため、画面に表示された人だけ「生存寄り」として記録しました（" + domCount + "人）。最終投稿日は取れていません。元のタブに戻ってください。");
+      return;
+    }
+    alert("フォロー棚: 最終投稿を取れませんでした。Xが一括取得と個別取得の両方を止めています。時間をおいて、もう一度コードを貼ってください。名簿は未確認のまま残しています。");
   })();
 })();`;
 
