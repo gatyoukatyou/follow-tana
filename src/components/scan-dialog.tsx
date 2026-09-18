@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { copyConsoleScript, openXListTab } from "@/lib/copy-script";
+import { copyConsoleScript, downloadConsoleScript, openXListTab } from "@/lib/copy-script";
 import { scanEtaLabel } from "@/lib/filter-sort";
 import { ownerListUrl } from "@/lib/owner";
 import { useRoster } from "@/lib/roster-store";
@@ -122,6 +122,14 @@ export function ScanDialog({
               </ol>
               <Button type="button" size="sm" variant="secondary" onClick={() => void copyScript()}>
                 コードを再コピー
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => downloadConsoleScript("follow-tana-scan.js", script)}
+              >
+                ファイルで保存
               </Button>
               <textarea
                 ref={scriptRef}

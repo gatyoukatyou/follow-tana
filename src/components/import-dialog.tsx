@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { copyConsoleScript, openXListTab } from "@/lib/copy-script";
+import { copyConsoleScript, downloadConsoleScript, openXListTab } from "@/lib/copy-script";
 import { countToScan, scanEtaLabel } from "@/lib/filter-sort";
 import { ownerListUrl } from "@/lib/owner";
 import { parseImport } from "@/lib/parse-import";
@@ -288,6 +288,14 @@ export function ImportDialog({
               <div className="flex flex-wrap gap-2">
                 <Button type="button" size="sm" variant="secondary" onClick={() => void copyScript()}>
                   コードを再コピー
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => downloadConsoleScript(`follow-tana-${kind}.js`, script)}
+                >
+                  ファイルで保存
                 </Button>
                 <Button type="button" size="sm" variant="ghost" asChild>
                   <a href={listUrl} target="_blank" rel="opener">

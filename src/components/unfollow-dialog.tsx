@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { ownerListUrl } from "@/lib/owner";
 import { useRoster } from "@/lib/roster-store";
-import { copyConsoleScript, openXListTab } from "@/lib/copy-script";
+import { copyConsoleScript, downloadConsoleScript, openXListTab } from "@/lib/copy-script";
 import { buildUnfollowScript } from "@/lib/x-unfollow-script";
 import type { Person } from "@/lib/types";
 
@@ -176,6 +176,14 @@ export function UnfollowDialog({
               </ol>
               <Button type="button" size="sm" variant="secondary" onClick={() => void copyScript()}>
                 コードを再コピー
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => downloadConsoleScript("follow-tana-unfollow.js", script)}
+              >
+                ファイルで保存
               </Button>
               <textarea
                 ref={scriptRef}
