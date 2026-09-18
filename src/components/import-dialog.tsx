@@ -206,7 +206,7 @@ export function ImportDialog({
           <DialogTitle>名簿を取り込む</DialogTitle>
           <DialogDescription>
             {kind === "following"
-              ? "Xから一括で取るか、書き出したJSONの控えを戻します。人数が多いと読み込みに時間がかかります。終わると完了の案内が出ます。"
+              ? "Xから一括で取るか、書き出したJSONの控えを戻します。Xから取る場合は、名簿のあと続けて最終投稿も調べます。人数が多いと数分かかります。終わると完了の案内が出ます。"
               : "Xのフォロワー一覧でコードを貼り、棚の人と照合して相互を付けます。"}
           </DialogDescription>
         </DialogHeader>
@@ -273,6 +273,7 @@ export function ImportDialog({
               </li>
               <li>
                 タブのタイトルが「棚 人数/目安」と増え、プロフィールのフォロー数に近づくまで待ちます。
+                そのあとタイトルが「確認 ○人」に変わり、最終投稿を調べます。
                 <span className="text-foreground"> 完了までXのタブは前面のままにしてください。切り替えると止まります。</span>
                 途中で止まったら同じコードをもう一度貼ってください。
               </li>

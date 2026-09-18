@@ -197,6 +197,107 @@ const COLLECTOR = `(() => {
     fromDom();
     readExpected();
   };
+  const twDate = (s) => {
+    const t = Date.parse(s || "");
+    return Number.isFinite(t) ? t : null;
+  };
+  const rowOf = (u) => {
+    const tc = Number(u.statuses_count || 0) || 0;
+    const joined = twDate(u.created_at);
+    const st = u.status;
+    let lp = st ? twDate(st.created_at) : null;
+    let lt = st ? String(st.text || st.full_text || "").slice(0, 180) : "";
+    if (lp == null && tc === 0) {
+      lp = joined;
+      lt = "投稿なし";
+    }
+    return {
+      h: u.screen_name || "",
+      id: String(u.id_str || u.id || ""),
+      n: u.name || "",
+      bio: String(u.description || "").slice(0, 400),
+      av: String(u.profile_image_url_https || "").replace("_normal", "_bigger"),
+      fl: Number(u.followers_count || 0) || 0,
+      fg: Number(u.friends_count || 0) || 0,
+      tc: tc,
+      vf: !!u.verified,
+      k: !!u.protected,
+      j: joined,
+      lp: lp,
+      lt: lt,
+    };
+  };
+  const scanLastPosts = async () => {
+    if (OP !== "Following") return 0;
+    const all = list();
+    if (all.length === 0) return 0;
+    const BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
+    const headers = () => ({
+      authorization: BEARER,
+      "x-csrf-token": cookie("ct0"),
+      "x-twitter-auth-type": "OAuth2Session",
+      "x-twitter-active-user": "yes",
+    });
+    let scanned = 0;
+    const sendScan = (profiles) => {
+      const payload = {
+        source: "follow-tana",
+        type: "progress",
+        op: OP,
+        stage: "scan",
+        handles: scanned === 0 ? all : [],
+        profiles: profiles || [],
+        count: all.length,
+        scanned: scanned,
+        expected: expected,
+      };
+      try { if (window.opener) window.opener.postMessage(payload, "*"); } catch (e) {}
+      document.title = "確認 " + scanned + "/" + all.length + "人";
+    };
+    sendScan([]);
+    const BATCH = 100;
+    for (let i = 0; i < all.length; i += BATCH) {
+      await waitVisible();
+      const chunk = all.slice(i, i + BATCH);
+      const url =
+        "https://x.com/i/api/1.1/users/lookup.json?include_entities=false&screen_name=" +
+        encodeURIComponent(chunk.join(","));
+      try {
+        let res = await orig(url, { method: "GET", credentials: "include", headers: headers() });
+        if (res.status === 429) {
+          document.title = "制限待ち… 確認 " + scanned + "/" + all.length;
+          await sleep(12000);
+          res = await orig(url, { method: "GET", credentials: "include", headers: headers() });
+        }
+        if (res.status === 401 || res.status === 403) {
+          alert("フォロー棚: 名簿は取れましたが、最終投稿の一括取得をXが拒みました。デスクの「生存確認」からもう一度調べてください。");
+          return scanned;
+        }
+        const got = {};
+        const profiles = [];
+        if (res.ok) {
+          const body = await res.json();
+          const listU = Array.isArray(body) ? body : [];
+          listU.forEach((u) => {
+            const row = rowOf(u);
+            if (!row.h) return;
+            got[row.h.toLowerCase()] = 1;
+            profiles.push(row);
+          });
+        }
+        chunk.forEach((h) => {
+          if (!got[h.toLowerCase()]) profiles.push({ h: h, miss: true });
+        });
+        scanned += chunk.length;
+        sendScan(profiles);
+      } catch (e) {
+        scanned += chunk.length;
+        sendScan(chunk.map((h) => ({ h: h, miss: true })));
+      }
+      await sleep(700);
+    }
+    return scanned;
+  };
   (async () => {
     for (let i = 0; i < 20 && !template; i++) {
       await waitVisible();
@@ -225,6 +326,8 @@ const COLLECTOR = `(() => {
     await waitVisible();
     fromDom();
     readExpected();
+    report("progress");
+    const scanned = await scanLastPosts();
     const payload = report("done");
     const text = payload.handles.map((h) => "@" + h).join("\\n");
     try { await navigator.clipboard.writeText(text); } catch (e) {}
@@ -239,7 +342,10 @@ const COLLECTOR = `(() => {
     const note = expected && payload.handles.length < expected
       ? "（プロフィールは約" + expected + "人。足りなければ同じコードをもう一度貼ってください）"
       : "";
-    alert("フォロー棚: " + payload.handles.length + "人を取得しました。" + note + "元のタブに戻ってください。");
+    const scanNote = OP === "Following"
+      ? (scanned > 0 ? "最終投稿も調べました。" : "最終投稿はデスクの「生存確認」から調べてください。")
+      : "";
+    alert("フォロー棚: " + payload.handles.length + "人を取得しました。" + scanNote + note + "元のタブに戻ってください。");
   })();
 })();`;
 

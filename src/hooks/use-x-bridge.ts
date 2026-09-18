@@ -22,9 +22,11 @@ export function useXBridge() {
         source?: string;
         type?: string;
         op?: string;
+        stage?: string;
         handles?: unknown;
         profiles?: unknown;
         count?: number;
+        scanned?: number;
         expected?: number;
       };
       if (!d || d.source !== "follow-tana") return;
@@ -60,7 +62,28 @@ export function useXBridge() {
       }
 
       const handles = parseXBridgeHandles(d.handles);
+      const snaps = parseScanProfiles(d.profiles);
       const n = handles.length || Number(d.count) || 0;
+
+      if (d.stage === "scan") {
+        if (d.op === "Followers") {
+          if (handles.length) s.markFollowers(handles);
+        } else if (handles.length) {
+          s.addHandles(handles, "import");
+        }
+        if (snaps.length) s.mergeProfiles(snaps);
+        const scanned = Number(d.scanned) || 0;
+        const total = Number(d.count) || n;
+        s.setPull({ status: "running", kind: "following", count: total });
+        toast.loading(
+          total > 0
+            ? `最終投稿を調べています… ${scanned.toLocaleString("ja-JP")} / ${total.toLocaleString("ja-JP")}人`
+            : "最終投稿を調べています…",
+          { id: "x-pull" },
+        );
+        return;
+      }
+
       if (d.op === "Unfollow") {
         if (handles.length) s.removePeople(handles);
         s.setPull({
@@ -106,9 +129,10 @@ export function useXBridge() {
         return;
       }
       const added = s.addHandles(handles, "import");
+      if (snaps.length) s.mergeProfiles(snaps);
       s.setPull({ status: "done", kind: "following", count: handles.length });
       toast.success(
-        `${handles.length}人を取り込み、${added}人を追加しました。生存確認を押すと最終投稿を調べます。`,
+        `${handles.length}人を取り込み、${added}人を追加しました。最終投稿も同じコードで調べ済みです。未確認が残れば「生存確認」を押してください。`,
         { id: "x-pull" },
       );
     }
