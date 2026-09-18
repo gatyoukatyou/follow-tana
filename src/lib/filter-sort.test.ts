@@ -165,10 +165,10 @@ describe("applyFilters", () => {
 describe("scanEtaLabel", () => {
   it("人数に応じた目安を返す", () => {
     expect(scanEtaLabel(0)).toBe("");
-    expect(scanEtaLabel(10)).toBe("1分以内");
-    expect(scanEtaLabel(80)).toBe("数分");
-    expect(scanEtaLabel(400)).toBe("10〜20分");
-    expect(scanEtaLabel(1500)).toBe("30分前後");
-    expect(scanEtaLabel(7547)).toBe("1時間前後");
+    expect(scanEtaLabel(10)).toBe("1分〜数分");
+    expect(scanEtaLabel(80)).toBe("15〜45分");
+    expect(scanEtaLabel(400)).toBe("1〜3時間");
+    expect(scanEtaLabel(1500)).toBe("3〜8時間");
+    expect(scanEtaLabel(7547)).toBe("半日以上（時間をおいて分けて実行）");
   });
 });

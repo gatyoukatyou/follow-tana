@@ -150,6 +150,116 @@ const SCAN = `(() => {
     } catch (e) {}
     return null;
   };
+  // ---- GraphQL 経路（旧 v1.1 API が全滅した 2026-09 以降の主経路） ----
+  // queryId は x.com の main.js から毎回拾う。ハードコードしない（Xが更新するため）。
+  let queryIds = null;
+  const gqlQueryId = async () => {
+    if (queryIds) return queryIds;
+    queryIds = {};
+    try {
+      const links = Array.from(document.querySelectorAll('link[rel="modulepreload"], script[src*="main"]'));
+      const srcs = links.map((el) => el.getAttribute("src") || el.getAttribute("href") || "").filter((s) => s.includes("main"));
+      for (const src of srcs) {
+        try {
+          const res = await fetch(src, { credentials: "include" });
+          if (!res.ok) continue;
+          const js = await res.text();
+          const tweets = js.match(/queryId:"([^"]+)",operationName:"UserTweets"/) || js.match(/operationName:"UserTweets",queryId:"([^"]+)"/) || js.match(/"UserTweets"[^}]{0,80}?queryId:"([^"]+)"/);
+          const byName = js.match(/queryId:"([^"]+)",operationName:"UserByScreenName"/) || js.match(/operationName:"UserByScreenName",queryId:"([^"]+)"/);
+          if (tweets) queryIds.tweets = tweets[1];
+          if (byName) queryIds.byName = byName[1];
+          if (queryIds.tweets || queryIds.byName) break;
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return queryIds;
+  };
+  let gqlUserIdCache = {};
+  let gqlSeq = 0;
+  const gqlGet = async (operation, queryId, variables) => {
+    gqlSeq += 1;
+    const url = "https://x.com/i/api/graphql/" + queryId + "/" + operation +
+      "?variables=" + encodeURIComponent(JSON.stringify(variables)) +
+      "&features=" + encodeURIComponent(JSON.stringify({
+        rweb_tipjar_consumption_enabled: true,
+        responsive_web_graphql_exclude_directive_enabled: true,
+        verified_phone_label_enabled: false,
+        creator_subscriptions_tweet_preview_api_enabled: true,
+        responsive_web_graphql_timeline_navigation_enabled: true,
+        responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+        communities_web_enable_tweet_community_results_fetch: true,
+      }));
+    let res = await fetch(url, { method: "GET", credentials: "include", headers: headers() });
+    if (res.status === 429) {
+      document.title = "制限待ち… 確認 " + done + "/" + handles.length + "人";
+      await sleep(15000 + Math.floor(Math.random() * 5000));
+      res = await fetch(url, { method: "GET", credentials: "include", headers: headers() });
+    }
+    return res;
+  };
+  const gqlUserByScreenName = async (h) => {
+    const ids = await gqlQueryId();
+    if (!ids.byName) return null;
+    const variables = {
+      screen_name: h,
+      withGrokTranslatedBio: false,
+    };
+    const res = await gqlGet("UserByScreenName", ids.byName, variables);
+    if (res.status === 404) return { gone: true, h: h };
+    if (!res.ok) return null;
+    try {
+      const body = await res.json();
+      const core = body && body.data && body.data.user && body.data.user.result ? body.data.user.result : null;
+      if (!core) return null;
+      if (core.__typename === "User") {
+        const legacy = core.legacy || {};
+        const row = rowOf(Object.assign({}, legacy, {
+          screen_name: legacy.screen_name || h,
+          id_str: core.rest_id,
+          status: null,
+        }));
+        row.tc = Number(legacy.statuses_count || 0) || 0;
+        return row;
+      }
+      return null;
+    } catch (e) {}
+    return null;
+  };
+  const gqlLastPostAt = async (h) => {
+    const ids = await gqlQueryId();
+    if (!ids.tweets) return null;
+    const res = await gqlGet("UserTweets", ids.tweets, {
+      userId: gqlUserIdCache[h.toLowerCase()] || "",
+      count: 1,
+      includePromotedContent: false,
+      withQuickPromoteEligibilityTweetFields: false,
+      withVoice: false,
+    });
+    if (!res.ok) return null;
+    try {
+      const body = await res.json();
+      const instr = body && body.data && body.data.user && body.data.user.result &&
+        body.data.user.result.timeline && body.data.user.result.timeline.timeline &&
+        body.data.user.result.timeline.timeline.instructions
+        ? body.data.user.result.timeline.timeline.instructions
+        : [];
+      for (const ins of instr) {
+        const entries = (ins.type === "TimelineAddEntries" && ins.entries) || [];
+        for (const ent of entries) {
+          const tw = ent && ent.content && ent.content.itemContent && ent.content.itemContent.tweet_results &&
+            ent.content.itemContent.tweet_results.result;
+          const legacy = tw && tw.legacy;
+          if (legacy && legacy.created_at) {
+            const t = twDate(legacy.created_at);
+            if (t) return { at: t, text: String(legacy.full_text || "").slice(0, 180) };
+          }
+        }
+      }
+      // エントリが空＝投稿ゼロ。参加日時は取れないため null のまま（未確認扱い）。
+      return { empty: true };
+    } catch (e) {}
+    return null;
+  };
   // APIが全滅したときの最後の手段：開いている一覧ページのDOMから直接読む。
   // UserCell には名前と（鍵以外は）自己紹介まで入る。最終投稿日は取れないので、
   // 「存在する人」を生存寄りとして記録する。
@@ -265,15 +375,55 @@ const SCAN = `(() => {
       alert("フォロー棚: " + handles.length + "人の生存確認が終わりました。見つからなかった人は未確認のままです。元のタブに戻ってください。");
       return;
     }
-    // APIが全滅した場合：一覧ページのDOMから「存在する人」を読む（最終投稿日は取れない）。
-    const domCount = await domScan();
-    if (domCount > 0) {
-      send("progress", domRows.slice());
-      send("done", []);
-      alert("フォロー棚: APIをXに止められたため、画面に表示された人だけ「生存寄り」として記録しました（" + domCount + "人）。最終投稿日は取れていません。元のタブに戻ってください。");
+    // 旧APIが全滅 → GraphQL経路に切り替え（遅い: 約50人/15分）。
+    const ids = await gqlQueryId();
+    if (!ids.tweets && !ids.byName) {
+      alert("フォロー棚: GraphQLの入口も見つかりませんでした。Xの仕様変更の可能性があります。時間をおいてもう一度お試しください。");
       return;
     }
-    alert("フォロー棚: 最終投稿を取れませんでした。Xが一括取得と個別取得の両方を止めています。時間をおいて、もう一度コードを貼ってください。名簿は未確認のまま残しています。");
+    let gqlFound = 0;
+    let gqlGoneStreak = 0;
+    for (const h of handles) {
+      await waitVisible();
+      try {
+        const prof = ids.byName ? await gqlUserByScreenName(h) : null;
+        if (prof && prof.gone) {
+          gqlGoneStreak += 1;
+          if (gqlGoneStreak >= 5) {
+            // 連続で消えている＝この経路も死んでいる可能性。誤って停止にしない。
+            alert("フォロー棚: GraphQL経路も応答しません。時間をおいてもう一度お試しください。名簿は未確認のまま残しています。");
+            send("done", []);
+            return;
+          }
+        } else {
+          gqlGoneStreak = 0;
+          if (prof && prof.h) {
+            gqlUserIdCache[h.toLowerCase()] = prof.id || "";
+            const last = ids.tweets ? await gqlLastPostAt(h) : null;
+            if (last && last.at) {
+              prof.lp = last.at;
+              prof.lt = last.text || "";
+            } else if (last && last.empty) {
+              prof.lp = prof.j;
+              prof.lt = "投稿なし";
+            }
+            send("progress", [prof]);
+            gqlFound += 1;
+          }
+        }
+        done += 1;
+        send("progress", []);
+      } catch (e) {
+        done += 1;
+      }
+      // UserTweets: 50回/15分。1人あたり約20秒空ける。
+      await sleep(1200);
+    }
+    if (gqlFound > 0) {
+      alert("フォロー棚: GraphQL経路で " + gqlFound + "人を確認しました（" + handles.length + "人中）。この経路は約50人/15分のため、残りは時間をおいてまた貼ってください。未確認のままの人は次回に回ります。");
+    } else {
+      alert("フォロー棚: 最終投稿を取れませんでした。Xが一括取得と個別取得の両方を止めています。時間をおいて、もう一度コードを貼ってください。名簿は未確認のまま残しています。");
+    }
   })();
 })();`;
 
