@@ -43,12 +43,14 @@ type RosterState = {
   setFilter: (patch: Partial<RosterFilters>) => void;
   toggleSelected: (handle: string) => void;
   selectVisible: (handles: string[]) => void;
+  deselectVisible: (handles: string[]) => void;
   clearSelected: () => void;
   dismissBanner: () => void;
   ensureSeeded: () => void;
   addHandles: (handles: string[], source: PersonSource) => number;
   ingestRoster: (incoming: Person[]) => number;
-  markFollowers: (handles: string[]) => number;
+  /** reconcile=true のとき全件確定として、外れた相互を一方に戻す */
+  markFollowers: (handles: string[], opts?: { reconcile?: boolean }) => number;
   mergeProfiles: (snaps: ProfileSnapshot[]) => number;
   repairMassFalseDead: () => number;
   updatePerson: (
@@ -89,7 +91,15 @@ export const useRoster = create<RosterState>()(
           selected: selected.includes(k) ? selected.filter((h) => h !== k) : [...selected, k],
         });
       },
-      selectVisible: (handles) => set({ selected: handles.map(keyOf) }),
+      selectVisible: (handles) => {
+        const keys = new Set(get().selected);
+        for (const h of handles) keys.add(keyOf(h));
+        set({ selected: [...keys] });
+      },
+      deselectVisible: (handles) => {
+        const drop = new Set(handles.map(keyOf));
+        set({ selected: get().selected.filter((h) => !drop.has(h)) });
+      },
       clearSelected: () => set({ selected: [] }),
       dismissBanner: () => set({ bannerDismissed: true }),
       ensureSeeded: () => {
@@ -132,47 +142,64 @@ export const useRoster = create<RosterState>()(
       ingestRoster: (incoming) => {
         if (incoming.length === 0) return 0;
         const byKey = new Map(get().people.map((p) => [keyOf(p.handle), p]));
+        let changed = 0;
         for (const row of incoming) {
           const next = normalizePerson(row);
           const k = keyOf(next.handle);
           const old = byKey.get(k);
           if (!old) {
             byKey.set(k, next);
+            changed += 1;
             continue;
           }
           const incomingFresh = (next.lastCheckedAt ?? 0) >= (old.lastCheckedAt ?? 0);
+          if (!incomingFresh) continue;
+          changed += 1;
           byKey.set(
             k,
-            incomingFresh
-              ? normalizePerson({
-                  ...old,
-                  ...next,
-                  followsYou: next.followsYou ?? old.followsYou,
-                  tags: next.tags.length ? next.tags : old.tags,
-                  note: next.note || old.note,
-                  addedAt: old.addedAt,
-                  source: old.source === "starter" ? next.source : old.source,
-                })
-              : old,
+            normalizePerson({
+              ...old,
+              ...next,
+              followsYou: next.followsYou ?? old.followsYou,
+              tags: next.tags.length ? next.tags : old.tags,
+              note: next.note || old.note,
+              addedAt: old.addedAt,
+              source: old.source === "starter" ? next.source : old.source,
+            }),
           );
         }
         set({ people: [...byKey.values()], seededOnce: true });
-        return incoming.length;
+        return changed;
       },
-      markFollowers: (handles) => {
+      markFollowers: (handles, opts) => {
         const incoming = handles.map(keyOf);
-        const all = new Set([...get().followerHandles, ...incoming]);
-        const people = get().people.map((p) =>
-          all.has(keyOf(p.handle))
-            ? normalizePerson({ ...p, followsYou: true })
-            : p,
-        );
+        const incomingSet = new Set(incoming);
+        const reconcile = opts?.reconcile === true;
+        // 確定時だけ集合を置き換える。途中経過では足し合わせる。
+        const all = reconcile
+          ? incomingSet
+          : new Set([...get().followerHandles, ...incoming]);
+        let matched = 0;
+        const people = get().people.map((p) => {
+          const k = keyOf(p.handle);
+          if (all.has(k)) {
+            matched += 1;
+            return p.followsYou === true
+              ? p
+              : normalizePerson({ ...p, followsYou: true });
+          }
+          // 確定時に限り、外れた相互を一方に戻す。未確認は未確認のまま。
+          if (reconcile && p.followsYou === true) {
+            return normalizePerson({ ...p, followsYou: false });
+          }
+          return p;
+        });
         set({
           followerHandles: [...all],
           followersImported: true,
           people,
         });
-        return incoming.length;
+        return matched;
       },
       mergeProfiles: (snaps) => {
         const byKey = new Map(snaps.map((s) => [keyOf(s.handle), s]));

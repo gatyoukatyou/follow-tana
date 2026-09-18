@@ -41,7 +41,14 @@ export function formatExactDate(ts: number | null): string {
 }
 
 export function normalizeHandle(raw: string): string {
-  return raw.trim().replace(/^@/, "").split(/[/?#]/)[0] ?? "";
+  const cut =
+    raw
+      .normalize("NFKC")
+      .trim()
+      .replace(/^[@＠]+/, "")
+      .split(/[/?#]/)[0] ?? "";
+  // 貼り付け時の末尾区切り（alice, / alice.）を落とす。URLスキームの ":" は削らない。
+  return cut.replace(/[.,;!?)\]]+$/, "");
 }
 
 export function isValidHandle(handle: string): boolean {
@@ -83,11 +90,15 @@ export function copyTextSync(text: string, fromEl?: HTMLTextAreaElement | HTMLIn
 }
 
 export async function copyText(text: string, fromEl?: HTMLTextAreaElement | HTMLInputElement | null): Promise<boolean> {
-  if (copyTextSync(text, fromEl)) return true;
+  if (!text) return false;
+  // 先に非推奨でない Clipboard API を試す。権限・非対応で失敗したら execCommand に落とす。
   try {
-    await navigator.clipboard.writeText(text);
-    return true;
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
   } catch {
-    return false;
+    /* フォールバックへ */
   }
+  return copyTextSync(text, fromEl);
 }

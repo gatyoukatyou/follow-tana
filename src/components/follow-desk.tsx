@@ -71,7 +71,7 @@ import {
   type Relation,
   type SortKey,
 } from "@/lib/types";
-import { cn, copyTextSync, formatLastPost } from "@/lib/utils";
+import { cn, copyText, formatLastPost } from "@/lib/utils";
 import { lookupXProfiles } from "@/lib/x-lookup";
 import { useEnrich } from "@/hooks/use-enrich";
 import { useOwnerHandle } from "@/hooks/use-owner";
@@ -205,7 +205,7 @@ async function copyHandles(handles: string[]) {
     return;
   }
   const text = handles.map((h) => `@${h}`).join("\n");
-  if (copyTextSync(text)) {
+  if (await copyText(text)) {
     toast.success(`${handles.length}人のハンドルをコピーしました`);
   } else {
     toast.error("コピーできませんでした");
@@ -248,6 +248,7 @@ export function FollowDesk() {
   const setFilter = useRoster((s) => s.setFilter);
   const toggleSelected = useRoster((s) => s.toggleSelected);
   const selectVisible = useRoster((s) => s.selectVisible);
+  const deselectVisible = useRoster((s) => s.deselectVisible);
   const clearSelected = useRoster((s) => s.clearSelected);
   const dismissBanner = useRoster((s) => s.dismissBanner);
   const addHandles = useRoster((s) => s.addHandles);
@@ -628,7 +629,7 @@ export function FollowDesk() {
                 checked={allVisibleSelected}
                 onCheckedChange={(v) => {
                   if (v) selectVisible(visible.map((p) => p.handle));
-                  else clearSelected();
+                  else deselectVisible(visible.map((p) => p.handle));
                 }}
                 aria-label="表示中をすべて選択"
               />

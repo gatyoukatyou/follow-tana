@@ -43,13 +43,21 @@ function lastKey(p: Person): number {
   return Number.POSITIVE_INFINITY - 1;
 }
 
+function isUnknownPost(p: Person): boolean {
+  return p.lastPostAt == null && !p.lookupFailed;
+}
+
 export function sortPeople(people: Person[], sort: SortKey): Person[] {
   const copy = people.slice();
   copy.sort((a, b) => {
     switch (sort) {
       case "last-asc":
+        // 未確認は末尾に固定する
+        if (isUnknownPost(a) !== isUnknownPost(b)) return isUnknownPost(a) ? 1 : -1;
         return lastKey(a) - lastKey(b) || collator.compare(a.handle, b.handle);
       case "last-desc":
+        // 新しい順でも未確認は末尾に固定する
+        if (isUnknownPost(a) !== isUnknownPost(b)) return isUnknownPost(a) ? 1 : -1;
         return lastKey(b) - lastKey(a) || collator.compare(a.handle, b.handle);
       case "followers-desc":
         return b.followers - a.followers || collator.compare(a.handle, b.handle);
@@ -109,7 +117,8 @@ const SCAN_RANK_SKIP = 99;
 function scanRank(p: Person): number {
   if (p.lastCheckedAt == null) return 0;
   if (p.lastPostAt == null && !p.protected && !p.lookupFailed) return 1;
-  if (p.lookupFailed && Date.now() - p.lastCheckedAt >= RECHECK_FAILED_AFTER_MS) return 2;
+  if (p.lookupFailed && !p.protected && Date.now() - p.lastCheckedAt >= RECHECK_FAILED_AFTER_MS)
+    return 2;
   return SCAN_RANK_SKIP;
 }
 

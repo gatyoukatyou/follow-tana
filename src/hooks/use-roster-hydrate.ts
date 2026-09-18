@@ -11,19 +11,25 @@ export function useRosterHydrate(onNeedOwner: () => void): boolean {
 
   useEffect(() => {
     const done = Promise.resolve(useRoster.persist.rehydrate());
-    void done.then(() => {
-      useRoster.getState().ensureSeeded();
-      const repaired = useRoster.getState().repairMassFalseDead();
-      enableRosterPersist();
-      setHydrated(true);
-      if (repaired > 0) {
-        toast.message(
-          `${repaired.toLocaleString("ja-JP")}人は調べ損ねだったので未確認に戻しました。生存確認からXで調べ直してください。`,
-          { duration: 12_000 },
-        );
-      }
-      if (!getOwnerHandle()) onNeedOwnerRef.current();
-    });
+    void done
+      .then(() => {
+        // repair による set() を保存対象にするため、先に永続化を有効化する
+        enableRosterPersist();
+        useRoster.getState().ensureSeeded();
+        const repaired = useRoster.getState().repairMassFalseDead();
+        setHydrated(true);
+        if (repaired > 0) {
+          toast.message(
+            `${repaired.toLocaleString("ja-JP")}人は調べ損ねだったので未確認に戻しました。生存確認からXで調べ直してください。`,
+            { duration: 12_000 },
+          );
+        }
+        if (!getOwnerHandle()) onNeedOwnerRef.current();
+      })
+      .catch(() => {
+        enableRosterPersist();
+        setHydrated(true);
+      });
   }, []);
 
   return hydrated;

@@ -14,16 +14,20 @@ export function shouldRejectSave(input: {
   allowShrink: boolean;
 }): boolean {
   if (input.allowShrink) return false;
+  // 増加は常に通す（初期取込を妨げない）
+  if (input.nextN >= input.liteN) return false;
   if (input.liteN <= LITE_GUARD_MIN) return false;
-  return input.nextN <= STARTER_MAX;
+  if (input.nextN <= STARTER_MAX) return true;
+  // 半分以下への急減は意図しない消失とみなして拒否する
+  return input.nextN < input.liteN * 0.5;
 }
 
 export type HydrateSource = "main" | "lite" | "none";
 
 /**
  * 読み出し元を決める。
- * mainAt === 0 は本バージョン以前に保存されたデータを意味し、
- * 控え（劣化コピー）より本体を優先する。
+ * mainAt === 0 は本バージョン以前に保存された時刻なしデータを意味する。
+ * 時刻付きの控えがあれば、古い本体へのダウングレードを避けるため控えを優先する。
  */
 export function pickHydrateSource(input: {
   hasMain: boolean;
@@ -31,7 +35,11 @@ export function pickHydrateSource(input: {
   hasLite: boolean;
   liteAt: number;
 }): HydrateSource {
-  if (input.hasMain && (input.mainAt === 0 || input.mainAt >= input.liteAt)) return "main";
+  if (input.hasMain && input.hasLite) {
+    if (input.mainAt === 0 && input.liteAt === 0) return "main";
+    if (input.mainAt === 0) return "lite";
+    return input.mainAt >= input.liteAt ? "main" : "lite";
+  }
   if (input.hasLite) return "lite";
   if (input.hasMain) return "main";
   return "none";

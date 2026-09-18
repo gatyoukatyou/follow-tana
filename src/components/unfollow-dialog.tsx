@@ -68,7 +68,7 @@ export function UnfollowDialog({
     el.select();
   }, [scriptOpen, script]);
 
-  function copyScript(): boolean {
+  function copyScript(): Promise<boolean> {
     return copyConsoleScript(script, scriptRef.current, "外すコードをコピーしました");
   }
 
@@ -86,15 +86,23 @@ export function UnfollowDialog({
       toast.error("外す人がいません");
       return;
     }
+    if (pull.status === "waiting" || pull.status === "running") {
+      if (pull.kind !== "unfollow") {
+        toast.message("Xとのやり取りの最中です。終わってから外す操作を始めてください");
+        return;
+      }
+    }
     flushSync(() => {
       setPull({ status: "waiting", kind: "unfollow", count: 0 });
       setScriptOpen(true);
     });
-    copyScript();
+    void copyScript();
     openX();
   }
 
   const running = pull.kind === "unfollow" && (pull.status === "waiting" || pull.status === "running");
+  const otherBusy =
+    (pull.status === "waiting" || pull.status === "running") && pull.kind !== "unfollow";
   const preview = targets.slice(0, 8);
 
   return (
@@ -124,7 +132,15 @@ export function UnfollowDialog({
               <input
                 type="checkbox"
                 checked={cap}
-                onChange={(e) => setCap(e.target.checked)}
+                onChange={(e) => {
+                  if (!e.target.checked && people.length > SAFE_BATCH) {
+                    const ok = confirm(
+                      `${people.length}人まとめて外します。短時間の大量解除はXに止められる可能性があります。本当に制限を外しますか？`,
+                    );
+                    if (!ok) return;
+                  }
+                  setCap(e.target.checked);
+                }}
                 className="size-4 accent-foreground"
               />
               一度に {SAFE_BATCH} 人まで（Xの制限対策）
@@ -135,7 +151,7 @@ export function UnfollowDialog({
             </p>
           )}
 
-          <Button onClick={() => start()} disabled={running || targets.length === 0}>
+          <Button onClick={() => start()} disabled={running || otherBusy || targets.length === 0}>
             {running ? <LoaderCircle className="size-4 animate-spin" /> : <UserMinus className="size-4" />}
             コードをコピーしてXを開く
           </Button>
@@ -158,7 +174,7 @@ export function UnfollowDialog({
                 <li>確認ダイアログで OK。タブタイトルが「外し ○人」と増えます。</li>
                 <li>終わったらこの画面に戻ると、棚から消えています。</li>
               </ol>
-              <Button type="button" size="sm" variant="secondary" onClick={() => copyScript()}>
+              <Button type="button" size="sm" variant="secondary" onClick={() => void copyScript()}>
                 コードを再コピー
               </Button>
               <textarea

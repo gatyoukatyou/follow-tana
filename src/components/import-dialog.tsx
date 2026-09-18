@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Bookmark, LoaderCircle, Radio } from "lucide-react";
 import { toast } from "sonner";
@@ -65,7 +65,10 @@ export function ImportDialog({
   const scriptRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const large = raw.length > LIVE_PARSE_MAX;
-  const parsed = large ? { handles: [] as string[], archiveWithoutHandles: false } : parseImport(raw);
+  const parsed = useMemo(
+    () => (large ? { handles: [] as string[], archiveWithoutHandles: false } : parseImport(raw)),
+    [large, raw],
+  );
   const script = buildCollectorScript(kind);
 
   useEffect(() => {
@@ -108,8 +111,8 @@ export function ImportDialog({
       return;
     }
     if (kind === "followers") {
-      const n = markFollowers(handles);
-      toast.success(`フォロワー ${n} 人を照合し、相互を更新しました。読み込みは完了です。`);
+      const n = markFollowers(handles, { reconcile: true });
+      toast.success(`フォロワー一覧で照合し、名簿中の ${n} 人を相互として更新しました。外れた人は一方に戻しています。`);
       setRaw("");
       onOpenChange(false);
       return;
@@ -127,7 +130,7 @@ export function ImportDialog({
     const dump = parseRosterDump(text);
     if (dump && dump.length > 0) {
       const n = ingestRoster(dump);
-      toast.success(`控えから ${n.toLocaleString("ja-JP")} 人を復元しました。読み込みは完了です。`);
+      toast.success(`控えを取り込み、${n.toLocaleString("ja-JP")} 人を新規・更新しました。棚にだけある人は残ります。`);
       noticeUnknowns();
       setRaw("");
       onOpenChange(false);
@@ -153,7 +156,7 @@ export function ImportDialog({
     if (fileRef.current) fileRef.current.value = "";
   }
 
-  function copyScript(): boolean {
+  function copyScript(): Promise<boolean> {
     return copyConsoleScript(script, scriptRef.current, "取得コードをコピーしました");
   }
 
@@ -171,7 +174,7 @@ export function ImportDialog({
       setPull({ status: "waiting", kind, count: 0 });
       setScriptOpen(true);
     });
-    copyScript();
+    void copyScript();
     openFollowingTab();
   }
 
@@ -283,7 +286,7 @@ export function ImportDialog({
           {scriptOpen ? (
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" variant="secondary" onClick={() => copyScript()}>
+                <Button type="button" size="sm" variant="secondary" onClick={() => void copyScript()}>
                   コードを再コピー
                 </Button>
                 <Button type="button" size="sm" variant="ghost" asChild>

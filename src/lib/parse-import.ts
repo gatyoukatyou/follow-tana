@@ -4,6 +4,23 @@ const HANDLE_TOKEN = /(?:^|[\s,;<>()[\]"'`])@([A-Za-z0-9_]{1,15})\b/g;
 const PROFILE_URL =
   /(?:https?:\/\/)?(?:www\.)?(?:x|twitter)\.com\/(?:intent\/user\?screen_name=)?@?([A-Za-z0-9_]{1,15})(?=[/?#\s]|$)/gi;
 
+/** Xの機能ページ名。URLから拾っても人ではない */
+const RESERVED_PATHS = new Set(
+  ["i", "intent", "home", "explore", "search", "settings", "following", "followers"].map((s) =>
+    s.toLowerCase(),
+  ),
+);
+
+function pushProfileUrlHits(text: string, out: string[], seen: Set<string>) {
+  PROFILE_URL.lastIndex = 0;
+  for (const match of text.matchAll(PROFILE_URL)) {
+    const handle = match[1];
+    if (handle && !RESERVED_PATHS.has(handle.toLowerCase())) {
+      pushUnique(out, seen, handle);
+    }
+  }
+}
+
 function pushUnique(out: string[], seen: Set<string>, handle: string) {
   const clean = normalizeHandle(handle);
   if (!isValidHandle(clean)) return;
@@ -18,6 +35,10 @@ function fromJson(raw: string, out: string[], seen: Set<string>): boolean {
     const data = JSON.parse(raw) as unknown;
     const walk = (node: unknown) => {
       if (typeof node === "string") {
+        // URL文字列（https://x.com/bob）の場合はURLから抜く
+        if (node.includes("x.com/") || node.includes("twitter.com/")) {
+          pushProfileUrlHits(node, out, seen);
+        }
         const n = normalizeHandle(node);
         if (isValidHandle(n)) pushUnique(out, seen, n);
         return;
@@ -41,19 +62,20 @@ function fromJson(raw: string, out: string[], seen: Set<string>): boolean {
   }
 }
 
-function fromCsv(raw: string, out: string[], seen: Set<string>) {
+function fromCsv(raw: string, out: string[], seen: Set<string>): boolean {
   const lines = raw.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return;
+  if (lines.length < 2) return false;
   const header = lines[0]!.split(/[, \t]/).map((h) => h.trim().toLowerCase().replace(/['"]/g, ""));
   const idx = header.findIndex((h) =>
     ["handle", "username", "screen_name", "screenname", "user", "account"].includes(h),
   );
-  if (idx < 0) return;
+  if (idx < 0) return false;
   for (const line of lines.slice(1)) {
     const cols = line.split(",").map((c) => c.trim().replace(/^["']|["']$/g, ""));
     const cell = cols[idx];
     if (cell) pushUnique(out, seen, cell);
   }
+  return true;
 }
 
 export function looksLikeTwitterArchive(raw: string): boolean {
@@ -73,25 +95,22 @@ export function parseImport(raw: string): { handles: string[]; archiveWithoutHan
     if (out.length) return { handles: out, archiveWithoutHandles: false };
   }
 
-  fromCsv(text, out, seen);
+  const csvFound = fromCsv(text, out, seen);
 
   HANDLE_TOKEN.lastIndex = 0;
-  PROFILE_URL.lastIndex = 0;
 
-  for (const match of text.matchAll(PROFILE_URL)) {
-    const handle = match[1];
-    if (handle && !["i", "intent", "home", "explore", "search", "settings"].includes(handle.toLowerCase())) {
-      pushUnique(out, seen, handle);
-    }
-  }
+  pushProfileUrlHits(text, out, seen);
 
   for (const match of text.matchAll(HANDLE_TOKEN)) {
     if (match[1]) pushUnique(out, seen, match[1]);
   }
 
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim().replace(/^@/, "");
-    if (isValidHandle(trimmed)) pushUnique(out, seen, trimmed);
+  // CSVとして読めた場合は行フォールバックを回さない（ヘッダ "handle" が人物化するのを防ぐ）。
+  if (!csvFound) {
+    for (const line of text.split(/\r?\n/)) {
+      const clean = normalizeHandle(line);
+      if (isValidHandle(clean)) pushUnique(out, seen, clean);
+    }
   }
 
   return { handles: out, archiveWithoutHandles: archiveWithoutHandles && out.length === 0 };
@@ -100,6 +119,7 @@ export function parseImport(raw: string): { handles: string[]; archiveWithoutHan
 export function buildXSearchUrl(handles: string[], keyword: string): string {
   const unique = [...new Set(handles.map((h) => normalizeHandle(h)).filter(isValidHandle))];
   const capped = unique.slice(0, 18);
+  if (capped.length === 0) return "https://x.com/search?src=typed_query&f=live";
   const from = capped.map((h) => `from:${h}`).join(" OR ");
   const q = keyword.trim() ? `(${from}) ${keyword.trim()}` : `(${from})`;
   return `https://x.com/search?q=${encodeURIComponent(q)}&src=typed_query&f=live`;
