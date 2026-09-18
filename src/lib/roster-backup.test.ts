@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LITE_KEY,
   liteWrittenAt,
+  parseRosterDump,
   persistJsonFromLite,
   writeLiteFromPersistJson,
 } from "@/lib/roster-backup";
@@ -155,5 +156,26 @@ describe("容量不足時の段階的縮退", () => {
   it("すべて失敗しても例外を投げない", () => {
     failFirst(99);
     expect(() => writeLiteFromPersistJson(persistJson([rich]))).not.toThrow();
+  });
+});
+
+describe("parseRosterDump", () => {
+  it("書き出した配列を復元する", () => {
+    const p = person("alice", { lastPostAt: 1_700_000_000_000, followsYou: true });
+    const dump = parseRosterDump(JSON.stringify([{ ...p, haystack: undefined }]));
+    expect(dump).toHaveLength(1);
+    expect(dump![0]!.handle).toBe("alice");
+    expect(dump![0]!.lastPostAt).toBe(1_700_000_000_000);
+    expect(dump![0]!.followsYou).toBe(true);
+  });
+
+  it("handle だけの配列も名簿として扱う", () => {
+    const dump = parseRosterDump(JSON.stringify([{ handle: "alice" }, { handle: "bob" }]));
+    expect(dump?.map((p) => p.handle)).toEqual(["alice", "bob"]);
+    expect(dump![0]!.lastPostAt).toBeNull();
+  });
+
+  it("JSONでないテキストは null", () => {
+    expect(parseRosterDump("@alice @bob")).toBeNull();
   });
 });

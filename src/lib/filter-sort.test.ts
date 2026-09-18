@@ -5,6 +5,7 @@ import {
   countToScan,
   handlesToScan,
   queryTokens,
+  scanEtaLabel,
   sortPeople,
 } from "@/lib/filter-sort";
 import { DORMANT_AFTER_MS, EMPTY_FILTERS, normalizePerson, type Person } from "@/lib/types";
@@ -123,5 +124,16 @@ describe("applyFilters", () => {
   it("先頭の @ を無視して検索する", () => {
     const p = person("alice");
     expect(applyFilters([p], EMPTY_FILTERS, queryTokens("@alice"))).toHaveLength(1);
+  });
+});
+
+describe("scanEtaLabel", () => {
+  it("人数に応じた目安を返す", () => {
+    expect(scanEtaLabel(0)).toBe("");
+    expect(scanEtaLabel(10)).toBe("1分以内");
+    expect(scanEtaLabel(80)).toBe("数分");
+    expect(scanEtaLabel(400)).toBe("10〜20分");
+    expect(scanEtaLabel(1500)).toBe("30分前後");
+    expect(scanEtaLabel(7547)).toBe("1時間前後");
   });
 });

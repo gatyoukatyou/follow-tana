@@ -134,3 +134,13 @@ export function countToScan(people: Person[], selected: string[]): number {
   for (const p of pool) if (needsScan(p)) n += 1;
   return n;
 }
+
+/** 生存確認の目安。1人あたり外部取得があるため、人数が多いと長くなる。 */
+export function scanEtaLabel(n: number): string {
+  if (n <= 0) return "";
+  if (n <= 30) return "1分以内";
+  if (n <= 120) return "数分";
+  if (n <= 600) return "10〜20分";
+  if (n <= 2500) return "30分前後";
+  return "1時間前後";
+}

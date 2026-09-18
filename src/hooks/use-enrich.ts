@@ -6,7 +6,8 @@ import { useRoster } from "@/lib/roster-store";
 
 export function useEnrich() {
   const [enriching, setEnriching] = useState(false);
-  const [enrichProgress, setEnrichProgress] = useState("");
+  const [enrichDone, setEnrichDone] = useState(0);
+  const [enrichTotal, setEnrichTotal] = useState(0);
   const enrichStop = useRef(false);
   const enrichingRef = useRef(false);
 
@@ -25,7 +26,8 @@ export function useEnrich() {
     enrichStop.current = false;
     enrichingRef.current = true;
     setEnriching(true);
-    setEnrichProgress(`0 / ${total.toLocaleString("ja-JP")}`);
+    setEnrichDone(0);
+    setEnrichTotal(total);
     if (start.filters.activity === "unknown") {
       start.setFilter({ activity: "any" });
     }
@@ -42,21 +44,22 @@ export function useEnrich() {
         for (const h of next) attempted.add(h.toLowerCase());
         await enrichInBatches(next, s.mergeProfiles, undefined, () => enrichStop.current);
         done += next.length;
-        setEnrichProgress(`${done.toLocaleString("ja-JP")} / ${total.toLocaleString("ja-JP")}`);
+        setEnrichDone(done);
       }
       if (enrichStop.current) {
         toast.message(`生存確認を止めました（${done.toLocaleString("ja-JP")}人まで）`);
       } else {
-        toast.success(`生存確認 ${done.toLocaleString("ja-JP")}人を更新しました`);
+        toast.success(`生存確認 ${done.toLocaleString("ja-JP")}人が完了しました`, { duration: 8000 });
       }
     } catch {
       toast.error("生存確認に失敗しました");
     } finally {
       enrichingRef.current = false;
       setEnriching(false);
-      setEnrichProgress("");
+      setEnrichDone(0);
+      setEnrichTotal(0);
     }
   }, []);
 
-  return { enriching, enrichProgress, runEnrich };
+  return { enriching, enrichDone, enrichTotal, runEnrich };
 }

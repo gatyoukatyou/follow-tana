@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Bookmark, ClipboardPaste, LoaderCircle, Radio } from "lucide-react";
+import { Bookmark, LoaderCircle, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,12 +14,30 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { copyConsoleScript, openXListTab } from "@/lib/copy-script";
+import { countToScan, scanEtaLabel } from "@/lib/filter-sort";
+import { ownerListUrl } from "@/lib/owner";
 import { parseImport } from "@/lib/parse-import";
 import { parseRosterDump } from "@/lib/roster-backup";
-import { ownerListUrl } from "@/lib/owner";
 import { useRoster } from "@/lib/roster-store";
-import { copyConsoleScript, openXListTab } from "@/lib/copy-script";
 import { buildCollectorScript, collectorBookmarklet } from "@/lib/x-collector-script";
+
+const LIVE_PARSE_MAX = 20_000;
+
+function yieldUi() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 50);
+  });
+}
+
+function noticeUnknowns() {
+  const unknown = countToScan(useRoster.getState().people, []);
+  if (unknown <= 0) return;
+  toast.message(
+    `最終投稿はまだ未確認です。デスクの「生存確認」を押してください（${unknown.toLocaleString("ja-JP")}人・${scanEtaLabel(unknown)}）。待っているだけでは進みません。`,
+    { duration: 12_000 },
+  );
+}
 
 export function ImportDialog({
   open,
@@ -41,10 +59,13 @@ export function ImportDialog({
   const pull = useRoster((s) => s.pull);
   const [raw, setRaw] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("名簿を読み込んでいます…");
   const [kind, setKind] = useState<"following" | "followers">(defaultKind);
   const [scriptOpen, setScriptOpen] = useState(false);
   const scriptRef = useRef<HTMLTextAreaElement>(null);
-  const parsed = parseImport(raw);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const large = raw.length > LIVE_PARSE_MAX;
+  const parsed = large ? { handles: [] as string[], archiveWithoutHandles: false } : parseImport(raw);
   const script = buildCollectorScript(kind);
 
   useEffect(() => {
@@ -68,9 +89,68 @@ export function ImportDialog({
     el.select();
   }, [scriptOpen, script]);
 
+  async function runBusy(label: string, work: () => Promise<void>) {
+    flushSync(() => {
+      setBusyLabel(label);
+      setBusy(true);
+    });
+    await yieldUi();
+    try {
+      await work();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyHandles(handles: string[]) {
+    if (handles.length === 0) {
+      toast.error("ハンドルが見つかりません");
+      return;
+    }
+    if (kind === "followers") {
+      const n = markFollowers(handles);
+      toast.success(`フォロワー ${n} 人を照合し、相互を更新しました。読み込みは完了です。`);
+      setRaw("");
+      onOpenChange(false);
+      return;
+    }
+    const added = addHandles(handles, "import");
+    toast.success(
+      `${handles.length.toLocaleString("ja-JP")}人を読み込み、${added.toLocaleString("ja-JP")}人を追加しました。読み込みは完了です。`,
+    );
+    noticeUnknowns();
+    setRaw("");
+    onOpenChange(false);
+  }
+
+  async function ingestText(text: string) {
+    const dump = parseRosterDump(text);
+    if (dump && dump.length > 0) {
+      const n = ingestRoster(dump);
+      toast.success(`控えから ${n.toLocaleString("ja-JP")} 人を復元しました。読み込みは完了です。`);
+      noticeUnknowns();
+      setRaw("");
+      onOpenChange(false);
+      return;
+    }
+    const next = parseImport(text);
+    if (next.archiveWithoutHandles) {
+      toast.error(
+        "XのデータアーカイブはユーザーIDのみで、ハンドルが含まれていません。上の「Xから一括で取る」を使ってください。",
+      );
+      return;
+    }
+    await applyHandles(next.handles);
+  }
+
   async function onFile(file: File) {
-    const text = await file.text();
-    setRaw(text);
+    await runBusy("ファイルを読んでいます…", async () => {
+      const text = await file.text();
+      setBusyLabel("名簿を組み立てています…");
+      await yieldUi();
+      await ingestText(text);
+    });
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   function copyScript(): boolean {
@@ -95,85 +175,39 @@ export function ImportDialog({
     openFollowingTab();
   }
 
-  async function fromClipboard() {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (!text.trim()) {
-        toast.error("クリップボードが空です");
-        return;
-      }
-      const next = parseImport(text);
-      if (next.handles.length === 0) {
-        setRaw(text);
-        toast.error("ハンドルが見つかりません。テキストを確認してください。");
-        return;
-      }
-      setRaw(text);
-      await applyHandles(next.handles);
-    } catch {
-      toast.error("クリップボードを読めませんでした。枠に貼り付けてください。");
-    }
-  }
-
-  async function applyHandles(handles: string[]) {
-    if (handles.length === 0) {
-      toast.error("ハンドルが見つかりません");
-      return;
-    }
-    setBusy(true);
-    try {
-      if (kind === "followers") {
-        const n = markFollowers(handles);
-        toast.success(`フォロワー ${n} 人を照合し、相互を更新しました`);
-        setRaw("");
-        onOpenChange(false);
-        return;
-      }
-      const added = addHandles(handles, "import");
-      toast.success(`${handles.length}人を読み込み、${added}人を新規追加しました`);
-      setRaw("");
-      onOpenChange(false);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function submit() {
-    const dump = parseRosterDump(raw);
-    if (dump && dump.length > 0) {
-      setBusy(true);
-      try {
-        const n = ingestRoster(dump);
-        toast.success(`控えから ${n.toLocaleString("ja-JP")} 人を復元しました`);
-        setRaw("");
-        onOpenChange(false);
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-    if (parsed.archiveWithoutHandles) {
-      toast.error(
-        "XのデータアーカイブはユーザーIDのみで、ハンドルが含まれていません。上の「Xから一括で取る」を使ってください。",
-      );
-      return;
-    }
-    await applyHandles(parsed.handles);
+    await runBusy("名簿を読み込んでいます…", async () => {
+      await ingestText(raw);
+    });
   }
 
   const listUrl = ownerHandle ? ownerListUrl(ownerHandle, kind) : "";
-
   const pulling = pull.status === "waiting" || pull.status === "running";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (busy && !next) return;
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent className="relative max-h-[90vh] overflow-y-auto">
+        {busy ? (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-card/90 px-6 text-center">
+            <LoaderCircle className="size-7 animate-spin text-slate" />
+            <p className="text-sm font-medium">{busyLabel}</p>
+            <p className="text-[12px] text-pretty text-muted-foreground">
+              人数が多いと数分かかることがあります。完了すると案内が出ます。終わるまでこのまま待ってください。
+            </p>
+          </div>
+        ) : null}
         <DialogHeader>
           <DialogTitle>名簿を取り込む</DialogTitle>
           <DialogDescription>
             {kind === "following"
-              ? "ログイン中のXのフォロー一覧でコードを貼るか、書き出したJSONの控えを戻します。"
-              : "ログイン中のXのフォロワー一覧ページでコードを貼り、棚の人と照合して相互を付けます。"}
+              ? "Xから一括で取るか、書き出したJSONの控えを戻します。人数が多いと読み込みに時間がかかります。終わると完了の案内が出ます。"
+              : "Xのフォロワー一覧でコードを貼り、棚の人と照合して相互を付けます。"}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3">
@@ -183,6 +217,7 @@ export function ImportDialog({
               size="sm"
               variant={kind === "following" ? "default" : "secondary"}
               onClick={() => setKind("following")}
+              disabled={busy}
             >
               フォロー中
             </Button>
@@ -191,12 +226,13 @@ export function ImportDialog({
               size="sm"
               variant={kind === "followers" ? "default" : "secondary"}
               onClick={() => setKind("followers")}
+              disabled={busy}
             >
               フォロワー（相互判定）
             </Button>
           </div>
 
-          <Button onClick={() => startBulk()} disabled={pulling}>
+          <Button onClick={() => startBulk()} disabled={pulling || busy}>
             {pulling ? <LoaderCircle className="size-4 animate-spin" /> : <Radio className="size-4" />}
             Xから一括で取る
           </Button>
@@ -276,32 +312,31 @@ export function ImportDialog({
 
           <div className="flex items-center gap-2">
             <span className="h-px flex-1 bg-border" />
-            <span className="text-[11px] text-muted-foreground">または貼り付け</span>
+            <span className="text-[11px] text-muted-foreground">またはJSON</span>
             <span className="h-px flex-1 bg-border" />
           </div>
 
-          <Label htmlFor="import-text">テキスト</Label>
+          <Label htmlFor="import-text">JSONまたはハンドル一覧</Label>
           <Textarea
             id="import-text"
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder={"書き出した follow-tana.json か、@handle のリスト"}
+            placeholder={"書き出した follow-tana.json"}
             className="min-h-28 font-mono text-sm"
+            disabled={busy}
           />
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="secondary" onClick={() => void fromClipboard()}>
-              <ClipboardPaste className="size-3.5" />
-              クリップボードから入れる
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setRaw("")} disabled={!raw}>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setRaw("")} disabled={!raw || busy}>
               JSONをクリア
             </Button>
             <label className="text-xs text-muted-foreground">
               ファイル
               <input
+                ref={fileRef}
                 type="file"
                 accept=".txt,.csv,.json,.js"
                 className="mt-1 block w-full text-xs file:mr-3 file:rounded-sm file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-foreground"
+                disabled={busy}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) void onFile(f);
@@ -310,11 +345,15 @@ export function ImportDialog({
             </label>
           </div>
           <p className="text-sm tabular-nums text-muted-foreground">
-            検出: {parsed.handles.length}人
-            {parsed.archiveWithoutHandles ? " · アーカイブ形式のためハンドルがありません" : ""}
+            {large
+              ? "大きいファイルです。棚に入れるを押すと読み込みます。完了すると案内が出ます。"
+              : `検出: ${parsed.handles.length}人${parsed.archiveWithoutHandles ? " · アーカイブ形式のためハンドルがありません" : ""}`}
+          </p>
+          <p className="text-[12px] text-pretty text-muted-foreground">
+            JSONを戻しても、最終投稿の確認は始まりません。入れ終わったらデスクの「生存確認」を押してください。
           </p>
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
               やめる
             </Button>
             <Button onClick={() => void submit()} disabled={busy}>
@@ -326,4 +365,3 @@ export function ImportDialog({
     </Dialog>
   );
 }
-

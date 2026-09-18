@@ -199,7 +199,8 @@ export function parseRosterDump(raw: string): Person[] | null {
         "lastCheckedAt" in r ||
         "lookupFailed" in r ||
         "source" in r ||
-        "h" in r,
+        "h" in r ||
+        "handle" in r,
     );
     if (!rosterLike) return null;
     return rows

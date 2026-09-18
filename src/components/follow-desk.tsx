@@ -55,6 +55,7 @@ import {
   countToScan,
   queryTokens,
   rosterStats,
+  scanEtaLabel,
   sortPeople,
   uniqueTags,
 } from "@/lib/filter-sort";
@@ -272,7 +273,7 @@ export function FollowDesk() {
 
   const hydrated = useRosterHydrate(() => setOwnerOpen(true));
   useXBridge();
-  const { enriching, enrichProgress, runEnrich } = useEnrich();
+  const { enriching, enrichDone, enrichTotal, runEnrich } = useEnrich();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -569,7 +570,7 @@ export function FollowDesk() {
                 <Activity className="size-3.5" />
               )}
               {enriching
-                ? `停止 ${enrichProgress}`
+                ? `停止 ${enrichDone.toLocaleString("ja-JP")} / ${enrichTotal.toLocaleString("ja-JP")}`
                 : `${selected.length > 0 ? "選択を生存確認" : "生存確認"} ${scanCount.toLocaleString("ja-JP")}`}
             </Button>
 
@@ -627,13 +628,30 @@ export function FollowDesk() {
             </label>
           </div>
           {enriching ? (
-            <p className="text-[12px] text-muted-foreground">
-              最終投稿を調べています。止めるときは「停止」を押してください。未確認が減り、古い投稿順に並びます。
-            </p>
-          ) : stats.unknown > 0 && (sort === "last-asc" || sort === "last-desc") ? (
-            <p className="text-[12px] text-muted-foreground">
-              最終投稿が未確認の {stats.unknown.toLocaleString("ja-JP")}{" "}
-              人は、生存確認するまで古い順に並べられません。
+            <div className="flex flex-col gap-2 rounded-lg bg-card px-3 py-3 shadow-[var(--shadow-border)]">
+              <div className="flex items-center gap-2">
+                <LoaderCircle className="size-4 shrink-0 animate-spin text-slate" />
+                <p className="text-[13px]">
+                  最終投稿を調べています {enrichDone.toLocaleString("ja-JP")} /{" "}
+                  {enrichTotal.toLocaleString("ja-JP")}
+                </p>
+              </div>
+              <div className="h-1 overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="h-full bg-slate transition-[width] duration-300"
+                  style={{
+                    width: `${enrichTotal > 0 ? Math.min(100, (enrichDone / enrichTotal) * 100) : 0}%`,
+                  }}
+                />
+              </div>
+              <p className="text-[12px] text-pretty text-muted-foreground">
+                フリーズではありません。未確認のバッジが少しずつ変わります。止めるときは「停止」。完了すると案内が出ます。タブはこのまま開いておいてください。
+              </p>
+            </div>
+          ) : stats.unknown > 0 ? (
+            <p className="text-[12px] text-pretty text-muted-foreground">
+              最終投稿が未確認の {stats.unknown.toLocaleString("ja-JP")} 人です。上の「生存確認」を押すと調べます。
+              待っているだけでは進みません。全員だと{scanEtaLabel(stats.unknown)}かかることがあります。完了すると案内が出ます。
             </p>
           ) : null}
         </div>
