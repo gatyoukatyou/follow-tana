@@ -55,6 +55,9 @@ export function isValidHandle(handle: string): boolean {
   return /^[A-Za-z0-9_]{1,15}$/.test(handle);
 }
 
+/** Clipboard API が沈黙したときの打ち切り時間 */
+export const CLIPBOARD_TIMEOUT_MS = 1500;
+
 export function copyTextSync(text: string, fromEl?: HTMLTextAreaElement | HTMLInputElement | null): boolean {
   if (typeof document === "undefined" || !text) return false;
   if (fromEl) {
@@ -91,14 +94,22 @@ export function copyTextSync(text: string, fromEl?: HTMLTextAreaElement | HTMLIn
 
 export async function copyText(text: string, fromEl?: HTMLTextAreaElement | HTMLInputElement | null): Promise<boolean> {
   if (!text) return false;
-  // 先に非推奨でない Clipboard API を試す。権限・非対応で失敗したら execCommand に落とす。
+  // 同期コピーを先に試す（クリック直後のジェスチャ内で完結させるため）。
+  if (copyTextSync(text, fromEl)) return true;
+  // 非対応・拒否の場合は Clipboard API にフォールバックする。
+  // 解決も拒否もしない実装があるためタイムアウト付き。
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
+      await Promise.race([
+        navigator.clipboard.writeText(text),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("clipboard-timeout")), CLIPBOARD_TIMEOUT_MS),
+        ),
+      ]);
       return true;
     }
   } catch {
-    /* フォールバックへ */
+    /* 手動コピー案内へ */
   }
-  return copyTextSync(text, fromEl);
+  return false;
 }
