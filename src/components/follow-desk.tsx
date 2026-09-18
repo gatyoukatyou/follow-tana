@@ -273,7 +273,7 @@ export function FollowDesk() {
 
   const hydrated = useRosterHydrate(() => setOwnerOpen(true));
   useXBridge();
-  const { enriching, enrichDone, enrichTotal, runEnrich } = useEnrich();
+  const { enriching, enrichDone, enrichTotal, runEnrich, stopEnrich } = useEnrich();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -558,21 +558,27 @@ export function FollowDesk() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button
-              variant={enriching ? "outline" : "secondary"}
-              size="sm"
-              disabled={people.length === 0 || (!enriching && scanCount === 0)}
-              onClick={() => void runEnrich()}
-            >
-              {enriching ? (
-                <LoaderCircle className="size-3.5 animate-spin" />
-              ) : (
+            {enriching ? (
+              <>
+                <Button variant="secondary" size="sm" disabled>
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                  確認中 {enrichDone.toLocaleString("ja-JP")} / {enrichTotal.toLocaleString("ja-JP")}
+                </Button>
+                <Button variant="outline" size="sm" onClick={stopEnrich}>
+                  停止
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={people.length === 0 || scanCount === 0}
+                onClick={() => void runEnrich()}
+              >
                 <Activity className="size-3.5" />
-              )}
-              {enriching
-                ? `停止 ${enrichDone.toLocaleString("ja-JP")} / ${enrichTotal.toLocaleString("ja-JP")}`
-                : `${selected.length > 0 ? "選択を生存確認" : "生存確認"} ${scanCount.toLocaleString("ja-JP")}`}
-            </Button>
+                {selected.length > 0 ? "選択を生存確認" : "生存確認"} {scanCount.toLocaleString("ja-JP")}
+              </Button>
+            )}
 
             <Button variant="ghost" size="sm" onClick={() => setCrossOpen(true)}>
               投稿をXで横断検索
@@ -645,7 +651,7 @@ export function FollowDesk() {
                 />
               </div>
               <p className="text-[12px] text-pretty text-muted-foreground">
-                フリーズではありません。未確認のバッジが少しずつ変わります。止めるときは「停止」。完了すると案内が出ます。タブはこのまま開いておいてください。
+                全員を順に調べます。未確認は、投稿日が取れた人から生存・休眠・停止に変わります。取れなかった人は未確認のまま残ります。止めるときは「停止」。タブはこのまま開いておいてください。
               </p>
             </div>
           ) : stats.unknown > 0 ? (
@@ -667,9 +673,9 @@ export function FollowDesk() {
               size="sm"
               variant="secondary"
               onClick={() => void runEnrich()}
-              disabled={!enriching && scanCount === 0}
+              disabled={enriching || scanCount === 0}
             >
-              {enriching ? "停止" : "生存確認"}
+              {enriching ? "確認中" : "生存確認"}
             </Button>
             <Button
               size="sm"

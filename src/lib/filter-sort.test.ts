@@ -94,6 +94,15 @@ describe("handlesToScan", () => {
     const people = Array.from({ length: 20 }, (_, i) => person(`u${i}`, { lastCheckedAt: null }));
     expect(handlesToScan(people, [], 6)).toHaveLength(6);
   });
+
+  it("先頭が失敗済みでも、その後ろの未確認を取り続ける", () => {
+    const people = [
+      person("a", { lastCheckedAt: null }),
+      person("b", { lastCheckedAt: null }),
+      person("c", { lastCheckedAt: null }),
+    ];
+    expect(handlesToScan(people, [], 2, new Set(["a"]))).toEqual(["b", "c"]);
+  });
 });
 
 describe("applyFilters", () => {

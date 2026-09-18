@@ -52,44 +52,97 @@ function decodeXml(s: string): string {
 }
 
 async function fetchLastPost(handle: string): Promise<{ at: number; text: string } | null> {
-  for (const host of NITTER_HOSTS) {
+  return firstNonNull([
+    fetchFxStatuses(handle),
+    ...NITTER_HOSTS.map((host) => fetchNitterRss(host, handle)),
+  ]);
+}
+
+function firstNonNull<T>(jobs: Promise<T | null>[]): Promise<T | null> {
+  return new Promise((resolve) => {
+    let open = jobs.length;
+    if (open === 0) {
+      resolve(null);
+      return;
+    }
+    let settled = false;
+    for (const job of jobs) {
+      void job.then(
+        (value) => {
+          if (value && !settled) {
+            settled = true;
+            resolve(value);
+            return;
+          }
+          open -= 1;
+          if (!settled && open === 0) resolve(null);
+        },
+        () => {
+          open -= 1;
+          if (!settled && open === 0) resolve(null);
+        },
+      );
+    }
+  });
+}
+
+async function fetchNitterRss(
+  host: string,
+  handle: string,
+): Promise<{ at: number; text: string } | null> {
+  try {
+    const res = await fetch(`${host}/${encodeURIComponent(handle)}/rss`, {
+      headers: { Accept: "application/rss+xml, application/xml, text/xml", "User-Agent": UA },
+      signal: AbortSignal.timeout(2500),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const xml = await res.text();
+    const item = xml.split("<item>")[1];
+    if (!item) return null;
+    const pub = item.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1];
+    const title = item.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? "";
+    const at = parseTwitterDate(pub ?? "");
+    if (at) return { at, text: decodeXml(title).slice(0, 180) };
+  } catch {
+    /* dead mirror */
+  }
+  return null;
+}
+
+async function fetchFxStatuses(handle: string): Promise<{ at: number; text: string } | null> {
+  for (let i = 0; i < 2; i++) {
     try {
-      const res = await fetch(`${host}/${encodeURIComponent(handle)}/rss`, {
-        headers: { Accept: "application/rss+xml, application/xml, text/xml", "User-Agent": UA },
-        signal: AbortSignal.timeout(6000),
-        cache: "no-store",
-      });
-      if (!res.ok) continue;
-      const xml = await res.text();
-      const item = xml.split("<item>")[1];
-      if (!item) continue;
-      const pub = item.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1];
-      const title = item.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? "";
-      const at = parseTwitterDate(pub ?? "");
-      if (at) return { at, text: decodeXml(title).slice(0, 180) };
+      const res = await fetch(
+        `https://api.fxtwitter.com/2/profile/${encodeURIComponent(handle)}/statuses?count=1`,
+        {
+          headers: { Accept: "application/json", "User-Agent": UA },
+          signal: AbortSignal.timeout(7000),
+          cache: "no-store",
+        },
+      );
+      if (res.status === 429 || res.status >= 500) {
+        if (i === 0) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        return null;
+      }
+      if (!res.ok) return null;
+      const body = (await res.json()) as FxStatuses;
+      const item = body.results?.[0];
+      if (!item) return null;
+      const at = parseTwitterDate(item.created_timestamp) ?? parseTwitterDate(item.created_at);
+      if (!at) return null;
+      return { at, text: (item.text ?? "").slice(0, 180) };
     } catch {
-      /* next source */
+      if (i === 0) {
+        await new Promise((r) => setTimeout(r, 400));
+        continue;
+      }
     }
   }
-  try {
-    const res = await fetch(
-      `https://api.fxtwitter.com/2/profile/${encodeURIComponent(handle)}/statuses?count=1`,
-      {
-        headers: { Accept: "application/json", "User-Agent": UA },
-        signal: AbortSignal.timeout(7000),
-        cache: "no-store",
-      },
-    );
-    if (!res.ok) return null;
-    const body = (await res.json()) as FxStatuses;
-    const item = body.results?.[0];
-    if (!item) return null;
-    const at = parseTwitterDate(item.created_timestamp) ?? parseTwitterDate(item.created_at);
-    if (!at) return null;
-    return { at, text: (item.text ?? "").slice(0, 180) };
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function emptySnap(handle: string, lookupFailed: boolean): ProfileSnapshot {
@@ -144,20 +197,30 @@ function toSnapshot(handle: string, user: FxUser, last: { at: number; text: stri
 }
 
 async function fetchFxUser(handle: string): Promise<{ status: number; user: FxUser | null }> {
-  try {
-    const res = await fetch(`https://api.fxtwitter.com/${encodeURIComponent(handle)}`, {
-      headers: { Accept: "application/json", "User-Agent": UA },
-      signal: AbortSignal.timeout(6000),
-      cache: "no-store",
-    });
-    if (res.status === 404) return { status: 404, user: null };
-    if (!res.ok) return { status: res.status, user: null };
-    const body = (await res.json()) as FxResponse;
-    if (!body.user?.screen_name) return { status: body.code === 404 ? 404 : res.status, user: null };
-    return { status: 200, user: body.user };
-  } catch {
-    return { status: 0, user: null };
+  let last = { status: 0, user: null as FxUser | null };
+  for (let i = 0; i < 2; i++) {
+    try {
+      const res = await fetch(`https://api.fxtwitter.com/${encodeURIComponent(handle)}`, {
+        headers: { Accept: "application/json", "User-Agent": UA },
+        signal: AbortSignal.timeout(6000),
+        cache: "no-store",
+      });
+      if (res.status === 404) return { status: 404, user: null };
+      if (res.status === 429 || res.status >= 500) {
+        last = { status: res.status, user: null };
+        await new Promise((r) => setTimeout(r, 500));
+        continue;
+      }
+      if (!res.ok) return { status: res.status, user: null };
+      const body = (await res.json()) as FxResponse;
+      if (!body.user?.screen_name) return { status: body.code === 404 ? 404 : res.status, user: null };
+      return { status: 200, user: body.user };
+    } catch {
+      last = { status: 0, user: null };
+      if (i === 0) await new Promise((r) => setTimeout(r, 400));
+    }
   }
+  return last;
 }
 
 async function fetchProfile(handle: string): Promise<ProfileSnapshot> {
@@ -197,7 +260,7 @@ export const lookupXProfiles = createServerFn({ method: "POST" })
     if (handles.length === 0) {
       return { ok: true as const, profiles: [] as ProfileSnapshot[] };
     }
-    const profiles = await mapPool(handles, 4, async (h) => {
+    const profiles = await mapPool(handles, 6, async (h) => {
       const snap = await fetchProfile(h);
       return { ...snap, handle: h };
     });

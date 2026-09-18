@@ -100,7 +100,7 @@ export function rosterStats(people: Person[]) {
   return { alive, dormant, dead, mutual, oneway, queue, unknown, locked, unchecked, total: people.length };
 }
 
-export const SCAN_BATCH = 6;
+export const SCAN_BATCH = 12;
 /** 取得に失敗した人を再確認するまでの待機時間 */
 export const RECHECK_FAILED_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -117,11 +117,17 @@ function needsScan(p: Person): boolean {
   return scanRank(p) < SCAN_RANK_SKIP;
 }
 
-export function handlesToScan(people: Person[], selected: string[], limit = SCAN_BATCH): string[] {
+export function handlesToScan(
+  people: Person[],
+  selected: string[],
+  limit = SCAN_BATCH,
+  skip?: Set<string>,
+): string[] {
   const sel = new Set(selected.map((h) => h.toLowerCase()));
   const pool = selected.length > 0 ? people.filter((p) => sel.has(p.handle.toLowerCase())) : people;
   return pool
     .filter(needsScan)
+    .filter((p) => !skip?.has(p.handle.toLowerCase()))
     .sort((a, b) => scanRank(a) - scanRank(b) || (a.lastCheckedAt ?? 0) - (b.lastCheckedAt ?? 0))
     .slice(0, limit)
     .map((p) => p.handle);

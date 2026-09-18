@@ -11,11 +11,12 @@ export function useEnrich() {
   const enrichStop = useRef(false);
   const enrichingRef = useRef(false);
 
+  const stopEnrich = useCallback(() => {
+    enrichStop.current = true;
+  }, []);
+
   const runEnrich = useCallback(async () => {
-    if (enrichingRef.current) {
-      enrichStop.current = true;
-      return;
-    }
+    if (enrichingRef.current) return;
     const start = useRoster.getState();
     const frozenSelected = start.selected.slice();
     const total = countToScan(start.people, frozenSelected);
@@ -32,17 +33,23 @@ export function useEnrich() {
       start.setFilter({ activity: "any" });
     }
     start.setSort("last-asc");
-    const attempted = new Set<string>();
+    const skip = new Set<string>();
     let done = 0;
     try {
       while (!enrichStop.current) {
         const s = useRoster.getState();
-        const next = handlesToScan(s.people, frozenSelected, SCAN_BATCH).filter(
-          (h) => !attempted.has(h.toLowerCase()),
-        );
+        const next = handlesToScan(s.people, frozenSelected, SCAN_BATCH, skip);
         if (next.length === 0) break;
-        for (const h of next) attempted.add(h.toLowerCase());
-        await enrichInBatches(next, s.mergeProfiles, undefined, () => enrichStop.current);
+        for (const h of next) skip.add(h.toLowerCase());
+        const mid = Math.ceil(next.length / 2);
+        const left = next.slice(0, mid);
+        const right = next.slice(mid);
+        await Promise.all([
+          enrichInBatches(left, s.mergeProfiles, undefined, () => enrichStop.current),
+          right.length > 0
+            ? enrichInBatches(right, s.mergeProfiles, undefined, () => enrichStop.current)
+            : Promise.resolve(0),
+        ]);
         done += next.length;
         setEnrichDone(done);
       }
@@ -61,5 +68,5 @@ export function useEnrich() {
     }
   }, []);
 
-  return { enriching, enrichDone, enrichTotal, runEnrich };
+  return { enriching, enrichDone, enrichTotal, runEnrich, stopEnrich };
 }
