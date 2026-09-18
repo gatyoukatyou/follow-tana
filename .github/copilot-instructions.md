@@ -1,0 +1,1 @@
+Read AGENTS.md first. Japanese UI. Roster stays in-browser only. Do not add auth or a server database. lookupFailed means confirmed gone, never a failed lookup. Run `npm test` and `npm run typecheck`.
