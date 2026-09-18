@@ -1,13 +1,16 @@
 import { toast } from "sonner";
-import { copyTextSync } from "@/lib/utils";
+import { copyText } from "@/lib/utils";
 
-export function copyConsoleScript(
+export async function copyConsoleScript(
   script: string,
   fromEl: HTMLTextAreaElement | HTMLInputElement | null,
   copiedLabel: string,
-): boolean {
-  const ok = copyTextSync(script, fromEl);
-  if (ok) {
+): Promise<boolean> {
+  if (!script) {
+    toast.error("コピーするコードがありません");
+    return false;
+  }
+  if (await copyText(script)) {
     toast.success(copiedLabel);
     return true;
   }
@@ -16,7 +19,7 @@ export function copyConsoleScript(
     fromEl.select();
   }
   toast.message(
-    "コードを選択しました。command + C（Windowsは Ctrl + C）でコピーしてください。",
+    "自動コピーできませんでした。選択中のコードを command + C（Windowsは Ctrl + C）でコピーしてください。",
   );
   return false;
 }

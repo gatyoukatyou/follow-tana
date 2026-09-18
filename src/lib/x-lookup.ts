@@ -229,7 +229,7 @@ async function fetchProfile(handle: string): Promise<ProfileSnapshot> {
     if (last) {
       return { ...emptySnap(handle, false), lastPostAt: last.at, lastPostText: last.text };
     }
-    return emptySnap(handle, false);
+    return emptySnap(handle, true);
   }
   if (fx.user) return toSnapshot(handle, fx.user, fx.user.protected ? null : last);
   if (last) {

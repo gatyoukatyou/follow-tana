@@ -56,6 +56,41 @@ describe("markFollowers", () => {
     expect(byHandle("alice").followsYou).toBe(true);
     expect(byHandle("bob").followsYou).toBe(true);
   });
+
+  it("確定時は外れた相互を一方に戻す", () => {
+    reset([person("alice", { followsYou: true }), person("bob", { followsYou: true })]);
+    useRoster.getState().markFollowers(["alice"], { reconcile: true });
+    expect(byHandle("alice").followsYou).toBe(true);
+    expect(byHandle("bob").followsYou).toBe(false);
+  });
+
+  it("確定時も関係未確認は未確認のままにする", () => {
+    reset([person("alice", { followsYou: null }), person("bob", { followsYou: null })]);
+    useRoster.getState().markFollowers(["alice"], { reconcile: true });
+    expect(byHandle("alice").followsYou).toBe(true);
+    expect(byHandle("bob").followsYou).toBeNull();
+  });
+
+  it("確定時は名簿と一致した人数を返す", () => {
+    reset([person("alice"), person("bob")]);
+    expect(useRoster.getState().markFollowers(["alice", "carol", "alice"], { reconcile: true })).toBe(1);
+  });
+});
+
+describe("selectVisible", () => {
+  it("表示中を選んでも既存の選択を残す", () => {
+    reset([person("alice"), person("bob"), person("carol")], { selected: ["carol"] });
+    useRoster.getState().selectVisible(["alice"]);
+    expect(useRoster.getState().selected.sort()).toEqual(["alice", "carol"]);
+  });
+
+  it("表示中の解除は表示外の選択を残す", () => {
+    reset([person("alice"), person("bob"), person("carol")], {
+      selected: ["alice", "carol"],
+    });
+    useRoster.getState().deselectVisible(["alice", "bob"]);
+    expect(useRoster.getState().selected).toEqual(["carol"]);
+  });
 });
 
 describe("addHandles", () => {

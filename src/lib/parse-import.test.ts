@@ -34,11 +34,23 @@ describe("parseImport", () => {
     expect(parseImport(raw).handles).toEqual(["alice", "bob"]);
   });
 
+  it("CSVのヘッダ行を人物として拾わない", () => {
+    expect(parseImport("handle\nalice\nbob").handles).toEqual(["alice", "bob"]);
+  });
+
+  it("JSON内のURLからもハンドルを取り出す", () => {
+    const raw = JSON.stringify([{ screen_name: "alice" }, { url: "https://x.com/bob" }]);
+    expect(parseImport(raw).handles).toEqual(["alice", "bob"]);
+  });
   it("ハンドルを含まないアーカイブを見分ける", () => {
     const raw = 'window.YTD.following.part0 = [ { "following" : { "accountId" : "12345" } } ]';
     const out = parseImport(raw);
     expect(out.handles).toEqual([]);
     expect(out.archiveWithoutHandles).toBe(true);
+  });
+
+  it("末尾のカンマや全角＠を掃除する", () => {
+    expect(parseImport("alice,\n＠bob").handles).toEqual(["alice", "bob"]);
   });
 
   it("空入力を安全に扱う", () => {

@@ -34,6 +34,23 @@ describe("sortPeople: last-asc", () => {
   });
 });
 
+describe("sortPeople: last-desc", () => {
+  it("生存 → 休眠 → 停止 の順に並び、未確認は末尾になる", () => {
+    const people = [
+      person("unknown", { lastCheckedAt: now, lastPostAt: null }),
+      person("alive", { lastPostAt: now - DAY }),
+      person("dead", { lookupFailed: true }),
+      person("dormant", { lastPostAt: now - DORMANT_AFTER_MS - DAY }),
+    ];
+    expect(sortPeople(people, "last-desc").map((p) => p.handle)).toEqual([
+      "alive",
+      "dormant",
+      "dead",
+      "unknown",
+    ]);
+  });
+});
+
 describe("countToScan", () => {
   it("一度も確認していない人は対象", () => {
     expect(countToScan([person("a", { lastCheckedAt: null })], [])).toBe(1);
@@ -62,6 +79,15 @@ describe("countToScan", () => {
       lookupFailed: true,
     });
     expect(countToScan([p], [])).toBe(1);
+  });
+
+  it("鍵かつ取得失敗でも待機期間を過ぎれば対象に戻らない", () => {
+    const p = person("a", {
+      lastCheckedAt: now - RECHECK_FAILED_AFTER_MS - DAY,
+      lookupFailed: true,
+      protected: true,
+    });
+    expect(countToScan([p], [])).toBe(0);
   });
 
   it("選択がある場合は選択の中だけを数える", () => {

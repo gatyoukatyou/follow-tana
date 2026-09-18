@@ -14,6 +14,10 @@ describe("shouldRejectSave", () => {
     expect(shouldRejectSave({ nextN: 9, liteN: 7565, allowShrink: false })).toBe(true);
   });
 
+  it("7000 人規模が 16 人への転落は拒否する", () => {
+    expect(shouldRejectSave({ nextN: 16, liteN: 7000, allowShrink: false })).toBe(true);
+  });
+
   it("意図した減員なら見本サイズでも通す", () => {
     expect(shouldRejectSave({ nextN: 9, liteN: 7565, allowShrink: true })).toBe(false);
   });
@@ -30,8 +34,12 @@ describe("shouldRejectSave", () => {
 describe("pickHydrateSource", () => {
   const base = { hasMain: true, mainAt: 0, hasLite: true, liteAt: 0 };
 
-  it("移行期（本体に時刻が無い）は本体を採る", () => {
-    expect(pickHydrateSource({ ...base, mainAt: 0, liteAt: 1_700_000_000_000 })).toBe("main");
+  it("移行期（本体に時刻が無い）は時刻付きの控えを採る", () => {
+    expect(pickHydrateSource({ ...base, mainAt: 0, liteAt: 1_700_000_000_000 })).toBe("lite");
+  });
+
+  it("どちらも時刻が無ければ本体を採る", () => {
+    expect(pickHydrateSource({ ...base, mainAt: 0, liteAt: 0 })).toBe("main");
   });
 
   it("同時刻なら本体を採る", () => {

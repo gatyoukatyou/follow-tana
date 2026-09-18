@@ -123,9 +123,9 @@ export function useXBridge() {
         return;
       }
       if (d.op === "Followers") {
-        const marked = s.markFollowers(handles);
+        const marked = s.markFollowers(handles, { reconcile: true });
         s.setPull({ status: "done", kind: "followers", count: handles.length });
-        toast.success(`フォロワー ${marked} 人を照合し、相互を更新しました`, { id: "x-pull" });
+        toast.success(`フォロワー ${marked} 人を相互として更新しました`, { id: "x-pull" });
         return;
       }
       const added = s.addHandles(handles, "import");

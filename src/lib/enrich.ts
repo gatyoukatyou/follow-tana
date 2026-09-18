@@ -6,20 +6,21 @@ export async function enrichInBatches(
   mergeProfiles: (snaps: ProfileSnapshot[]) => number,
   onProgress?: (done: number, total: number) => void,
   shouldStop?: () => boolean,
-) {
+): Promise<{ done: number; merged: number }> {
   const unique = [...new Set(handles)];
   let done = 0;
+  let merged = 0;
   for (let i = 0; i < unique.length; i += LOOKUP_BATCH) {
-    if (shouldStop?.()) return done;
+    if (shouldStop?.()) return { done, merged };
     const chunk = unique.slice(i, i + LOOKUP_BATCH);
     try {
       const res = await lookupXProfiles({ data: { handles: chunk } });
-      mergeProfiles(res.profiles);
+      merged += mergeProfiles(res.profiles);
     } catch {
       /* keep going — next chunk */
     }
     done += chunk.length;
     onProgress?.(done, unique.length);
   }
-  return done;
+  return { done, merged };
 }

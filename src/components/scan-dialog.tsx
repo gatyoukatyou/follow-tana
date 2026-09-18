@@ -53,7 +53,7 @@ export function ScanDialog({
     el.select();
   }, [scriptOpen, script]);
 
-  function copyScript(): boolean {
+  function copyScript(): Promise<boolean> {
     return copyConsoleScript(script, scriptRef.current, "生存確認のコードをコピーしました");
   }
 
@@ -63,6 +63,12 @@ export function ScanDialog({
       onNeedOwner();
       return;
     }
+    if (pull.status === "waiting" || pull.status === "running") {
+      if (pull.kind !== "scan") {
+        toast.message("Xとのやり取りの最中です。終わってから生存確認を始めてください");
+        return;
+      }
+    }
     if (handles.length === 0) {
       toast.error("確認する人がいません");
       return;
@@ -71,11 +77,13 @@ export function ScanDialog({
       setPull({ status: "waiting", kind: "scan", count: 0 });
       setScriptOpen(true);
     });
-    copyScript();
+    void copyScript();
     openXListTab(ownerListUrl(ownerHandle, "following"));
   }
 
   const running = pull.kind === "scan" && (pull.status === "waiting" || pull.status === "running");
+  const otherBusy =
+    (pull.status === "waiting" || pull.status === "running") && pull.kind !== "scan";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -91,7 +99,7 @@ export function ScanDialog({
           <p className="text-[13px] text-pretty text-muted-foreground">
             取込と同じ手順です。コードを貼ると、100人ずつ最終投稿を戻します。タブは前面のまま完了まで待ってください。
           </p>
-          <Button onClick={() => start()} disabled={running || handles.length === 0}>
+          <Button onClick={() => start()} disabled={running || otherBusy || handles.length === 0}>
             {running ? <LoaderCircle className="size-4 animate-spin" /> : <Activity className="size-4" />}
             コードをコピーしてXを開く
           </Button>
@@ -112,7 +120,7 @@ export function ScanDialog({
                 <li>確認ダイアログで OK。タブタイトルが「確認 ○人」と増えます。</li>
                 <li>終わったらこの画面に戻ると、未確認が生存・休眠・停止に分かれています。</li>
               </ol>
-              <Button type="button" size="sm" variant="secondary" onClick={() => copyScript()}>
+              <Button type="button" size="sm" variant="secondary" onClick={() => void copyScript()}>
                 コードを再コピー
               </Button>
               <textarea
