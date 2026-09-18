@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DAILY_UNFOLLOW_QUOTA,
   applyVerdicts,
+  createArenaTracker,
   demoRound,
   demoSchedule,
   dormantPlaceholderLp,
@@ -10,6 +11,7 @@ import {
   intervalMsLeft,
   isSweep,
   judgeRound,
+  playDemo,
   quotaProgress,
   quotaReached,
   sinceStartMs,
@@ -145,5 +147,39 @@ describe("demo", () => {
 describe("quota 定数", () => {
   it("1日の解除上限は400", () => {
     expect(DAILY_UNFOLLOW_QUOTA).toBe(400);
+  });
+});
+
+describe("createArenaTracker", () => {
+  it("ラウンド入力を集計して統計まで通す", () => {
+    const t = createArenaTracker();
+    t.accept({ round: 1, since: "2025-09-19", checked: ["a", "b"], profiles: [{ h: "a", lp: 1 }, { h: "b", lp: 2 }] });
+    t.accept({ round: 2, since: "2025-09-19", checked: ["c"], profiles: [{ h: "c", lp: Date.now() }] });
+    expect(t.rounds).toHaveLength(2);
+    expect(t.stats.fell).toBe(2);
+    expect(t.stats.survived).toBe(1);
+    expect(t.stats.combo).toBe(0);
+    expect(t.stats.bestCombo).toBe(2);
+  });
+});
+
+describe("playDemo", () => {
+  it("delayMs=0 で台本どおり全ラウンドを即時 emit する", async () => {
+    const schedule = demoSchedule();
+    const got: number[] = [];
+    const played = await playDemo(schedule, (input, i) => got.push(input.round + i * 0), { delayMs: 0 });
+    expect(played).toBe(schedule.length);
+    expect(got).toEqual(schedule.map((_, i) => i + 1));
+  });
+
+  it("signal.stopped で中断する", async () => {
+    const schedule = demoSchedule();
+    const signal = { stopped: false };
+    const emit = vi.fn();
+    const done = playDemo(schedule, emit, { delayMs: 20, signal });
+    signal.stopped = true;
+    const played = await done;
+    expect(played).toBe(1);
+    expect(emit).toHaveBeenCalledTimes(1);
   });
 });

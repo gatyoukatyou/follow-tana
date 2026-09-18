@@ -130,6 +130,25 @@ export function applyVerdicts(stats: ArenaStats, result: ArenaJudgeResult): Aren
   return next;
 }
 
+/** デモ・実スキャン共通の集計器。ラウンド入力 → judge → 統計反映までを1本化する */
+export function createArenaTracker(dailyGoal = DAILY_UNFOLLOW_QUOTA) {
+  let stats = emptyStats(dailyGoal);
+  const rounds: ArenaJudgeResult[] = [];
+  return {
+    get stats() {
+      return stats;
+    },
+    rounds,
+    /** 1ラウンド分の生スキャン入力を取り込み、判定と統計を返す */
+    accept(input: ArenaJudgeInput): ArenaJudgeResult {
+      const result = judgeRound(input);
+      rounds.push(result);
+      stats = applyVerdicts(stats, result);
+      return result;
+    },
+  };
+}
+
 /** 1ラウンド全員脱落 */
 export function isSweep(result: ArenaJudgeResult): boolean {
   return result.rows.length > 0 && result.rows.every((r) => r.verdict === "fell");
@@ -204,4 +223,37 @@ export function demoSchedule(since = "2025-09-19"): DemoRoundSpec[] {
     { survived: 3, fell: 16, vanished: 1, pending: 0 },
   ];
   return shapes.map((s, i) => ({ round: i + 1, since, ...s }));
+}
+
+// ---- デモ再生（UIから呼ぶ駆動部。React に依存しない） ----
+
+export type DemoPlayerHandle = { stop: () => void };
+
+/**
+ * デモ台本を順に emit する。UIはこのたびごとに judgeRound → applyVerdicts で
+ * 数字を更新すれば、本物のスキャンと同じパイプラインで見た目を確認できる。
+ * delayMs=0 で即時完走（テスト用）。既存コードには一切触れない。
+ */
+export function playDemo(
+  schedule: DemoRoundSpec[],
+  emit: (input: ArenaJudgeInput, index: number) => void,
+  opts: { delayMs?: number; signal?: { stopped: boolean } } = {},
+): Promise<number> {
+  const delayMs = opts.delayMs ?? 2000;
+  const sleep = (ms: number) =>
+    ms <= 0 ? Promise.resolve() : new Promise((r) => setTimeout(r, ms));
+  let stopped = false;
+  if (opts.signal) {
+    opts.signal.stopped = false;
+  }
+  return (async () => {
+    let played = 0;
+    for (let i = 0; i < schedule.length; i += 1) {
+      if (opts.signal?.stopped) break;
+      emit(demoRound(schedule[i]!), i);
+      played += 1;
+      if (i < schedule.length - 1) await sleep(delayMs);
+    }
+    return played;
+  })();
 }
