@@ -18,8 +18,7 @@ import { parseImport } from "@/lib/parse-import";
 import { parseRosterDump } from "@/lib/roster-backup";
 import { ownerListUrl } from "@/lib/owner";
 import { useRoster } from "@/lib/roster-store";
-import { copyTextSync } from "@/lib/utils";
-import { LOOKUP_BATCH, lookupXProfiles } from "@/lib/x-lookup";
+import { copyConsoleScript, openXListTab } from "@/lib/copy-script";
 import { buildCollectorScript, collectorBookmarklet } from "@/lib/x-collector-script";
 
 export function ImportDialog({
@@ -75,28 +74,11 @@ export function ImportDialog({
   }
 
   function copyScript(): boolean {
-    const ok = copyTextSync(script, scriptRef.current);
-    if (ok) {
-      toast.success("取得コードをコピーしました");
-      return true;
-    }
-    const el = scriptRef.current;
-    if (el) {
-      el.focus();
-      el.select();
-    }
-    toast.message("コードを選択しました。command + C（Windowsは Ctrl + C）でコピーしてください。");
-    return false;
+    return copyConsoleScript(script, scriptRef.current, "取得コードをコピーしました");
   }
 
   function openFollowingTab() {
-    const a = document.createElement("a");
-    a.href = ownerListUrl(ownerHandle, kind);
-    a.target = "_blank";
-    a.rel = "opener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    openXListTab(ownerListUrl(ownerHandle, kind));
   }
 
   function startBulk() {
@@ -345,25 +327,3 @@ export function ImportDialog({
   );
 }
 
-export async function enrichInBatches(
-  handles: string[],
-  mergeProfiles: (snaps: Awaited<ReturnType<typeof lookupXProfiles>>["profiles"]) => number,
-  onProgress?: (done: number, total: number) => void,
-  shouldStop?: () => boolean,
-) {
-  const unique = [...new Set(handles)];
-  let done = 0;
-  for (let i = 0; i < unique.length; i += LOOKUP_BATCH) {
-    if (shouldStop?.()) return done;
-    const chunk = unique.slice(i, i + LOOKUP_BATCH);
-    try {
-      const res = await lookupXProfiles({ data: { handles: chunk } });
-      mergeProfiles(res.profiles);
-    } catch {
-      /* keep going — next chunk */
-    }
-    done += chunk.length;
-    onProgress?.(done, unique.length);
-  }
-  return done;
-}

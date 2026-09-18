@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
@@ -20,12 +20,15 @@ import {
   X,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
+import { AddPersonDialog } from "@/components/add-person-dialog";
+import { CrossSearchDialog } from "@/components/cross-search-dialog";
+import { ImportDialog } from "@/components/import-dialog";
 import { Mark } from "@/components/mark";
-import { ImportDialog, enrichInBatches } from "@/components/import-dialog";
 import { OwnerDialog } from "@/components/owner-dialog";
-import { UnfollowDialog } from "@/components/unfollow-dialog";
 import { PersonAvatar } from "@/components/person-avatar";
 import { PersonSheet } from "@/components/person-sheet";
+import { TagDialog } from "@/components/tag-dialog";
+import { UnfollowDialog } from "@/components/unfollow-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -46,21 +49,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  SCAN_BATCH,
   applyFilters,
   countToScan,
-  handlesToScan,
   queryTokens,
   rosterStats,
   sortPeople,
   uniqueTags,
 } from "@/lib/filter-sort";
-import { buildXSearchUrl, parseImport, X_SEARCH_HANDLE_CAP } from "@/lib/parse-import";
-import { enableRosterPersist, flushRosterStorage, wipeRosterStorage } from "@/lib/idb-storage";
-import { getOwnerHandle } from "@/lib/owner";
+import { wipeRosterStorage, flushRosterStorage } from "@/lib/idb-storage";
 import { useRoster } from "@/lib/roster-store";
 import {
   ACTIVITY_LABEL,
@@ -72,9 +70,12 @@ import {
   type Relation,
   type SortKey,
 } from "@/lib/types";
-import { cn, copyTextSync, formatLastPost, isValidHandle, normalizeHandle } from "@/lib/utils";
+import { cn, copyTextSync, formatLastPost } from "@/lib/utils";
 import { lookupXProfiles } from "@/lib/x-lookup";
+import { useEnrich } from "@/hooks/use-enrich";
 import { useOwnerHandle } from "@/hooks/use-owner";
+import { useRosterHydrate } from "@/hooks/use-roster-hydrate";
+import { useXBridge } from "@/hooks/use-x-bridge";
 
 const SORT_LABEL: Record<SortKey, string> = {
   "last-asc": "最終投稿が古い順",
@@ -265,154 +266,13 @@ export function FollowDesk() {
   const [clearOpen, setClearOpen] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [enriching, setEnriching] = useState(false);
-  const [enrichProgress, setEnrichProgress] = useState("");
-  const [hydrated, setHydrated] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const enrichStop = useRef(false);
-  const enrichingRef = useRef(false);
   const mobile = useIsMobile();
 
-  const runEnrich = useCallback(async () => {
-    if (enrichingRef.current) {
-      enrichStop.current = true;
-      return;
-    }
-    const start = useRoster.getState();
-    const frozenSelected = start.selected.slice();
-    const total = countToScan(start.people, frozenSelected);
-    if (total === 0) {
-      toast.message("確認する人がいません");
-      return;
-    }
-    enrichStop.current = false;
-    enrichingRef.current = true;
-    setEnriching(true);
-    setEnrichProgress(`0 / ${total.toLocaleString("ja-JP")}`);
-    if (start.filters.activity === "unknown") {
-      start.setFilter({ activity: "any" });
-    }
-    start.setSort("last-asc");
-    const attempted = new Set<string>();
-    let done = 0;
-    try {
-      while (!enrichStop.current) {
-        const s = useRoster.getState();
-        const next = handlesToScan(s.people, frozenSelected, SCAN_BATCH).filter(
-          (h) => !attempted.has(h.toLowerCase()),
-        );
-        if (next.length === 0) break;
-        for (const h of next) attempted.add(h.toLowerCase());
-        await enrichInBatches(next, s.mergeProfiles, undefined, () => enrichStop.current);
-        done += next.length;
-        setEnrichProgress(`${done.toLocaleString("ja-JP")} / ${total.toLocaleString("ja-JP")}`);
-      }
-      if (enrichStop.current) {
-        toast.message(`生存確認を止めました（${done.toLocaleString("ja-JP")}人まで）`);
-      } else {
-        toast.success(`生存確認 ${done.toLocaleString("ja-JP")}人を更新しました`);
-      }
-    } catch {
-      toast.error("生存確認に失敗しました");
-    } finally {
-      enrichingRef.current = false;
-      setEnriching(false);
-      setEnrichProgress("");
-    }
-  }, []);
-
-  useEffect(() => {
-    const done = Promise.resolve(useRoster.persist.rehydrate());
-    void done.then(() => {
-      useRoster.getState().ensureSeeded();
-      enableRosterPersist();
-      setHydrated(true);
-      if (!getOwnerHandle()) setOwnerOpen(true);
-    });
-  }, []);
-
-  useEffect(() => {
-    function onMsg(e: MessageEvent) {
-      const d = e.data as {
-        source?: string;
-        type?: string;
-        op?: string;
-        handles?: unknown;
-        count?: number;
-        expected?: number;
-      };
-      if (!d || d.source !== "follow-tana") return;
-      if (
-        e.origin !== "https://x.com" &&
-        e.origin !== "https://twitter.com" &&
-        e.origin !== window.location.origin
-      ) {
-        return;
-      }
-      const handles = Array.isArray(d.handles)
-        ? [
-            ...new Set(
-              d.handles.map((h) => normalizeHandle(String(h))).filter(isValidHandle),
-            ),
-          ]
-        : [];
-      const s = useRoster.getState();
-      const n = handles.length || Number(d.count) || 0;
-      if (d.op === "Unfollow") {
-        if (handles.length) s.removePeople(handles);
-        s.setPull({
-          status: d.type === "done" ? "done" : "running",
-          kind: "unfollow",
-          count: n,
-        });
-        if (d.type === "done") {
-          toast.success(
-            n > 0
-              ? `${n.toLocaleString("ja-JP")}人のフォローを外し、棚からも外しました`
-              : "外せる人を見つけられませんでした",
-            { id: "x-unfollow" },
-          );
-        } else {
-          toast.loading(`Xで外しています… ${n.toLocaleString("ja-JP")}人`, { id: "x-unfollow" });
-        }
-        return;
-      }
-      if (d.type === "progress") {
-        s.setPull({ status: "running", count: n });
-        const exp = Number(d.expected) || 0;
-        toast.loading(
-          exp > 0
-            ? `Xから取得中… ${n.toLocaleString("ja-JP")} / ${exp.toLocaleString("ja-JP")}人`
-            : `Xから取得中… ${n.toLocaleString("ja-JP")}人`,
-          { id: "x-pull" },
-        );
-        return;
-      }
-      if (d.type !== "done") return;
-      if (handles.length === 0) {
-        s.setPull({ status: "idle", count: 0 });
-        toast.error("Xから人が取れませんでした。ログインとコンソール実行を確認してください。", {
-          id: "x-pull",
-        });
-        return;
-      }
-      if (d.op === "Followers") {
-        const marked = s.markFollowers(handles);
-        s.setPull({ status: "done", kind: "followers", count: handles.length });
-        toast.success(`フォロワー ${marked} 人を照合し、相互を更新しました`, { id: "x-pull" });
-        return;
-      }
-      const added = s.addHandles(handles, "import");
-      s.setPull({ status: "done", kind: "following", count: handles.length });
-      toast.success(
-        `${handles.length}人を取り込み、${added}人を追加しました。生存確認を押すと最終投稿を調べます。`,
-        { id: "x-pull" },
-      );
-    }
-    window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
-  }, []);
+  const hydrated = useRosterHydrate(() => setOwnerOpen(true));
+  useXBridge();
+  const { enriching, enrichProgress, runEnrich } = useEnrich();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -969,186 +829,5 @@ export function FollowDesk() {
         <Toaster theme="dark" position="bottom-center" richColors={false} />
       </div>
     </TooltipProvider>
-  );
-}
-
-function AddPersonDialog({
-  open,
-  onOpenChange,
-  onAdd,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onAdd: (handle: string) => Promise<void>;
-}) {
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const parsed = parseImport(value).handles[0] ?? normalizeHandle(value);
-
-  async function submit() {
-    if (!isValidHandle(parsed)) {
-      toast.error("ハンドルを入力してください");
-      return;
-    }
-    setBusy(true);
-    try {
-      await onAdd(parsed);
-      toast.success(`@${parsed} を追加しました`);
-      setValue("");
-      onOpenChange(false);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>1人追加</DialogTitle>
-          <DialogDescription>ハンドルまたはプロフィールURLを入力します。</DialogDescription>
-        </DialogHeader>
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void submit();
-          }}
-        >
-          <Input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="@handle"
-            autoFocus
-          />
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              やめる
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              追加
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function CrossSearchDialog({
-  open,
-  onOpenChange,
-  selected,
-  visible,
-  query,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  selected: string[];
-  visible: Person[];
-  query: string;
-}) {
-  const [keyword, setKeyword] = useState(query);
-  const [scope, setScope] = useState<"selected" | "visible">("visible");
-
-  useEffect(() => {
-    if (open) {
-      setKeyword(query);
-      setScope(selected.length > 0 ? "selected" : "visible");
-    }
-  }, [open, query, selected.length]);
-
-  const pool =
-    scope === "selected" && selected.length > 0 ? selected : visible.map((p) => p.handle);
-  const capped = pool.slice(0, X_SEARCH_HANDLE_CAP);
-  const url = capped.length ? buildXSearchUrl(capped, keyword) : "";
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>投稿をXで横断検索</DialogTitle>
-          <DialogDescription>
-            選択中または表示中の人（最大{X_SEARCH_HANDLE_CAP}人）の投稿を、Xの検索で一度に見ます。
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-3">
-          <Label htmlFor="kw">キーワード</Label>
-          <Input
-            id="kw"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            placeholder="LLM、財務、沖縄…"
-          />
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={scope === "visible" ? "default" : "secondary"}
-              onClick={() => setScope("visible")}
-            >
-              表示中 {visible.length}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={scope === "selected" ? "default" : "secondary"}
-              onClick={() => setScope("selected")}
-              disabled={selected.length === 0}
-            >
-              選択中 {selected.length}
-            </Button>
-          </div>
-          <p className="text-[12px] text-muted-foreground">
-            {pool.length > X_SEARCH_HANDLE_CAP
-              ? `${pool.length}人中、上位${X_SEARCH_HANDLE_CAP}人で検索します。名簿を絞ると精度が上がります。`
-              : `${capped.length}人の投稿を対象にします。`}
-          </p>
-          <div className="flex justify-end">
-            <Button asChild disabled={!url}>
-              <a href={url} target="_blank" rel="noreferrer">
-                Xで開く
-              </a>
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function TagDialog({
-  open,
-  onOpenChange,
-  onApply,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onApply: (tag: string) => void;
-}) {
-  const [tag, setTag] = useState("");
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>選択中にタグ</DialogTitle>
-          <DialogDescription>まとめて分類します。</DialogDescription>
-        </DialogHeader>
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (tag.trim()) onApply(tag.trim());
-            setTag("");
-          }}
-        >
-          <Input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="AI、投資、仕事" />
-          <div className="flex justify-end">
-            <Button type="submit">付ける</Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }

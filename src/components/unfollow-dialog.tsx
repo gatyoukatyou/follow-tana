@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { ownerListUrl } from "@/lib/owner";
 import { useRoster } from "@/lib/roster-store";
-import { copyTextSync } from "@/lib/utils";
+import { copyConsoleScript, openXListTab } from "@/lib/copy-script";
 import { buildUnfollowScript } from "@/lib/x-unfollow-script";
 import type { Person } from "@/lib/types";
 
@@ -69,28 +69,11 @@ export function UnfollowDialog({
   }, [scriptOpen, script]);
 
   function copyScript(): boolean {
-    const ok = copyTextSync(script, scriptRef.current);
-    if (ok) {
-      toast.success("外すコードをコピーしました");
-      return true;
-    }
-    const el = scriptRef.current;
-    if (el) {
-      el.focus();
-      el.select();
-    }
-    toast.message("コードを選択しました。command + C でコピーしてください。");
-    return false;
+    return copyConsoleScript(script, scriptRef.current, "外すコードをコピーしました");
   }
 
   function openX() {
-    const a = document.createElement("a");
-    a.href = ownerListUrl(ownerHandle, "following");
-    a.target = "_blank";
-    a.rel = "opener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    openXListTab(ownerListUrl(ownerHandle, "following"));
   }
 
   function start() {
