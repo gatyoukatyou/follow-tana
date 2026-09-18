@@ -195,7 +195,7 @@ export function ImportDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent className="relative max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         {busy ? (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-card/90 px-6 text-center">
             <LoaderCircle className="size-7 animate-spin text-slate" />
