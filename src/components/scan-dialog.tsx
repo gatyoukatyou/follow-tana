@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/dialog";
 import { copyConsoleScript, downloadConsoleScript, openXListTab } from "@/lib/copy-script";
 import { scanEtaLabel } from "@/lib/filter-sort";
-import { ownerListUrl } from "@/lib/owner";
 import { useRoster } from "@/lib/roster-store";
 import { buildScanScript } from "@/lib/x-scan-script";
 import type { Person } from "@/lib/types";
@@ -38,7 +37,13 @@ export function ScanDialog({
   const pull = useRoster((s) => s.pull);
   const [scriptOpen, setScriptOpen] = useState(false);
   const scriptRef = useRef<HTMLTextAreaElement>(null);
-  const handles = useMemo(() => people.map((p) => p.handle), [people]);
+  const handles = useMemo(
+    () =>
+      [...people]
+        .sort((a, b) => a.addedAt - b.addedAt) // 昔フォローした人から（休眠率が高い）
+        .map((p) => p.handle),
+    [people],
+  );
   const script = useMemo(() => buildScanScript(handles), [handles]);
 
   useEffect(() => {
@@ -78,7 +83,7 @@ export function ScanDialog({
       setScriptOpen(true);
     });
     void copyScript();
-    openXListTab(ownerListUrl(ownerHandle, "following"));
+    openXListTab("https://x.com/search?q=from%3AX&src=typed_query&f=live");
   }
 
   const running = pull.kind === "scan" && (pull.status === "waiting" || pull.status === "running");
@@ -89,15 +94,15 @@ export function ScanDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>生存確認</DialogTitle>
+          <DialogTitle>生存確認（今日の外し候補を探す）</DialogTitle>
           <DialogDescription>
             {people.length.toLocaleString("ja-JP")}{" "}
-            人の最終投稿を、ログイン中のXで調べます。7,500人規模なら数分です。公開の検索より多く取れます。
+            人を20人ずつまとめ検索で調べます。昔フォローした人から順に、検索枠（50回/15分）を使い切ると15分待ちます。枠は約3分で使い切ります。
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3">
           <p className="text-[13px] text-pretty text-muted-foreground">
-            取込と同じ手順です。コードを貼ると、100人ずつ最終投稿を戻します。タブは前面のまま完了まで待ってください。
+            開くのは検索ページです。コードを貼ると20人ずつまとめ検索で調べ、見つかった休眠が随時棚に流れ込みます。待ち時間は外す人を選ぶ時間にしてください。
           </p>
           <Button onClick={() => start()} disabled={running || otherBusy || handles.length === 0}>
             {running ? <LoaderCircle className="size-4 animate-spin" /> : <Activity className="size-4" />}
@@ -115,10 +120,10 @@ export function ScanDialog({
           {scriptOpen ? (
             <>
               <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-muted-foreground">
-                <li>開いたXがフォロー一覧か確認します。</li>
+                <li>開いたXが検索結果ページか確認します（フォロー一覧ではなく）。</li>
                 <li>F12 → コンソールの一番下に、command + V（Windowsは Ctrl + V）で貼って Enter。</li>
-                <li>確認ダイアログで OK。タブタイトルが「確認 ○人」と増えます。</li>
-                <li>終わったらこの画面に戻ると、未確認が生存・休眠・停止に分かれています。</li>
+                <li>確認ダイアログで OK。枠（50回）を約3分で使い切ると15分待ちに入ります。途中で閉じても進捗は保存済み。</li>
+                <li>終わったらこの画面に戻ると、休眠が確定しています。飽和で保留になった人は次回また調べます。</li>
               </ol>
               <Button type="button" size="sm" variant="secondary" onClick={() => void copyScript()}>
                 コードを再コピー
