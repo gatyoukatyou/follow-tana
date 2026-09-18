@@ -156,12 +156,12 @@ export function countToScan(people: Person[], selected: string[]): number {
   return n;
 }
 
-/** 生存確認の目安。1人あたり外部取得があるため、人数が多いと長くなる。 */
+/** 生存確認の目安。GraphQL経路は約50人/15分のため、人数に比例して長くなる。 */
 export function scanEtaLabel(n: number): string {
   if (n <= 0) return "";
-  if (n <= 30) return "1分以内";
-  if (n <= 120) return "数分";
-  if (n <= 600) return "10〜20分";
-  if (n <= 2500) return "30分前後";
-  return "1時間前後";
+  if (n <= 30) return "1分〜数分";
+  if (n <= 150) return "15〜45分";
+  if (n <= 600) return "1〜3時間";
+  if (n <= 2500) return "3〜8時間";
+  return "半日以上（時間をおいて分けて実行）";
 }
