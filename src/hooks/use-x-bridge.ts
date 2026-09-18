@@ -44,12 +44,19 @@ export function useXBridge() {
           count: n,
         });
         if (d.type === "done") {
-          toast.success(
-            n > 0
-              ? `Xで ${n.toLocaleString("ja-JP")} 人の生存確認が終わりました`
-              : "生存確認が終わりました",
-            { id: "x-scan" },
-          );
+          if (n > 0 && snaps.length === 0) {
+            toast.message(
+              `Xで ${n.toLocaleString("ja-JP")} 人調べましたが、最終投稿を取れませんでした。Xが止めている可能性があります。時間をおいてもう一度コードを貼ってください。`,
+              { id: "x-scan", duration: 12_000 },
+            );
+          } else {
+            toast.success(
+              n > 0
+                ? `Xで ${n.toLocaleString("ja-JP")} 人の生存確認が終わりました`
+                : "生存確認が終わりました",
+              { id: "x-scan" },
+            );
+          }
         } else {
           toast.loading(
             exp > 0

@@ -228,9 +228,9 @@ const COLLECTOR = `(() => {
     };
   };
   const scanLastPosts = async () => {
-    if (OP !== "Following") return 0;
+    if (OP !== "Following") return { scanned: 0, found: 0 };
     const all = list();
-    if (all.length === 0) return 0;
+    if (all.length === 0) return { scanned: 0, found: 0 };
     const BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
     const headers = () => ({
       authorization: BEARER,
@@ -239,6 +239,8 @@ const COLLECTOR = `(() => {
       "x-twitter-active-user": "yes",
     });
     let scanned = 0;
+    let found = 0;
+    let bulkDead = false;
     const sendScan = (profiles) => {
       const payload = {
         source: "follow-tana",
@@ -319,7 +321,7 @@ const COLLECTOR = `(() => {
         const got = await lookup(chunk);
         if (got.status === 401 || got.status === 403) {
           alert("フォロー棚: 名簿は取れましたが、最終投稿の一括取得をXが拒みました。デスクの「生存確認」からもう一度調べてください。");
-          return scanned;
+          return { scanned: scanned, found: found };
         }
         const profiles = [];
         if (got.list) {
@@ -339,7 +341,30 @@ const COLLECTOR = `(() => {
               await sleep(250);
             }
           }
+        } else if (!bulkDead && got.status !== 429) {
+          // 一括取得が死んでいる場合は1人ずつ調べる。制限中は叩かない。
+          const base = profiles.length;
+          let consecutiveGone = 0;
+          for (let m = 0; m < chunk.length; m++) {
+            await waitVisible();
+            const one = await showOne(chunk[m]);
+            if (one && one.gone) {
+              consecutiveGone += 1;
+              profiles.push({ h: chunk[m], gone: true });
+              if (consecutiveGone >= 5) {
+                // 連続で消えている＝個別取得自体が死んでいる可能性。誤って停止にしない。
+                profiles.length = base;
+                bulkDead = true;
+                break;
+              }
+            } else {
+              consecutiveGone = 0;
+              if (one && one.h) profiles.push(one);
+            }
+            await sleep(300);
+          }
         }
+        found += profiles.length;
         scanned += chunk.length;
         sendScan(profiles);
       } catch (e) {
@@ -348,7 +373,7 @@ const COLLECTOR = `(() => {
       }
       await sleep(800);
     }
-    return scanned;
+    return { scanned: scanned, found: found };
   };
   (async () => {
     for (let i = 0; i < 20 && !template; i++) {
@@ -379,7 +404,9 @@ const COLLECTOR = `(() => {
     fromDom();
     readExpected();
     report("progress");
-    const scanned = await scanLastPosts();
+    const gotScan = await scanLastPosts();
+    const scanned = gotScan.scanned;
+    const found = gotScan.found;
     const payload = report("done");
     const text = payload.handles.map((h) => "@" + h).join("\\n");
     try { await navigator.clipboard.writeText(text); } catch (e) {}
@@ -395,7 +422,7 @@ const COLLECTOR = `(() => {
       ? "（プロフィールは約" + expected + "人。足りなければ同じコードをもう一度貼ってください）"
       : "";
     const scanNote = OP === "Following"
-      ? (scanned > 0 ? "最終投稿も調べました。" : "最終投稿はデスクの「生存確認」から調べてください。")
+      ? (found > 0 ? "最終投稿も調べました。" : (scanned > 0 ? "最終投稿はXが止めていたため取れませんでした。デスクの「生存確認」から時間をおいて調べてください。" : "最終投稿はデスクの「生存確認」から調べてください。"))
       : "";
     alert("フォロー棚: " + payload.handles.length + "人を取得しました。" + scanNote + note + "元のタブに戻ってください。");
   })();

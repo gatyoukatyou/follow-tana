@@ -152,6 +152,8 @@ const SCAN = `(() => {
   };
   (async () => {
     const BATCH = 20;
+    let found = 0;
+    let bulkDead = false;
     for (let i = 0; i < handles.length; i += BATCH) {
       await waitVisible();
       const chunk = handles.slice(i, i + BATCH);
@@ -180,7 +182,30 @@ const SCAN = `(() => {
               await sleep(250);
             }
           }
+        } else if (!bulkDead && got.status !== 429) {
+          // 一括取得が死んでいる場合は1人ずつ調べる。制限中は叩かない。
+          const base = profiles.length;
+          let consecutiveGone = 0;
+          for (let m = 0; m < chunk.length; m++) {
+            await waitVisible();
+            const one = await showOne(chunk[m]);
+            if (one && one.gone) {
+              consecutiveGone += 1;
+              profiles.push({ h: chunk[m], gone: true });
+              if (consecutiveGone >= 5) {
+                // 連続で消えている＝個別取得自体が死んでいる可能性。誤って停止にしない。
+                profiles.length = base;
+                bulkDead = true;
+                break;
+              }
+            } else {
+              consecutiveGone = 0;
+              if (one && one.h) profiles.push(one);
+            }
+            await sleep(300);
+          }
         }
+        found += profiles.length;
         done += chunk.length;
         send("progress", profiles);
       } catch (e) {
@@ -190,7 +215,11 @@ const SCAN = `(() => {
       await sleep(800);
     }
     send("done", []);
-    alert("フォロー棚: " + handles.length + "人の生存確認が終わりました。見つからなかった人は未確認のままです。元のタブに戻ってください。");
+    if (found > 0 || done === 0) {
+      alert("フォロー棚: " + handles.length + "人の生存確認が終わりました。見つからなかった人は未確認のままです。元のタブに戻ってください。");
+    } else {
+      alert("フォロー棚: 最終投稿を取れませんでした。Xが一括取得と個別取得の両方を止めています。時間をおいて、もう一度コードを貼ってください。名簿は未確認のまま残しています。");
+    }
   })();
 })();`;
 

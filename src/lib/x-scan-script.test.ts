@@ -1,3 +1,4 @@
+import { Script } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { buildScanScript, parseScanProfiles } from "@/lib/x-scan-script";
 
@@ -35,5 +36,15 @@ describe("buildScanScript", () => {
     expect(s).toContain('"Alice"');
     expect(s).toContain('"bob"');
     expect(s).toContain('op: "Scan"');
+  });
+
+  it("一括全滅時は個別取得に切り替える", () => {
+    const s = buildScanScript(["alice"]);
+    expect(s).toContain("consecutiveGone");
+    expect(s).toContain("bulkDead");
+  });
+
+  it("生成コードは構文として壊れていない", () => {
+    expect(() => new Script(buildScanScript(["alice", "bob"]))).not.toThrow();
   });
 });
