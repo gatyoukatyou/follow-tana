@@ -3,6 +3,11 @@ export const STARTER_MAX = 15;
 /** これ以下の件数ではガードを効かせない（初期状態の増加を妨げないため） */
 export const LITE_GUARD_MIN = 40;
 
+/**
+ * 保存を見送るべきかを判定する。
+ * 意図した減員（削除・クリア・解除完了）は allowShrink で明示され、常に通る。
+ * 拒否するのは、相応の規模の名簿が見本サイズまで転落した場合のみ。
+ */
 export function shouldRejectSave(input: {
   nextN: number;
   liteN: number;
@@ -15,6 +20,11 @@ export function shouldRejectSave(input: {
 
 export type HydrateSource = "main" | "lite" | "none";
 
+/**
+ * 読み出し元を決める。
+ * mainAt === 0 は本バージョン以前に保存されたデータを意味し、
+ * 控え（劣化コピー）より本体を優先する。
+ */
 export function pickHydrateSource(input: {
   hasMain: boolean;
   mainAt: number;
