@@ -96,57 +96,101 @@ const SCAN = `(() => {
     });
   };
   const lookup = async (chunk) => {
-    const url =
-      "https://x.com/i/api/1.1/users/lookup.json?include_entities=false&screen_name=" +
-      encodeURIComponent(chunk.join(","));
+    const q = encodeURIComponent(chunk.join(","));
+    const hdr = headers();
+    const getUrl = "https://x.com/i/api/1.1/users/lookup.json?include_entities=false&screen_name=" + q;
+    let res = await fetch(getUrl, { method: "GET", credentials: "include", headers: hdr });
+    if (res.status === 429) {
+      await sleep(20000);
+      res = await fetch(getUrl, { method: "GET", credentials: "include", headers: hdr });
+    }
+    if (res.status === 401 || res.status === 403) return { status: res.status, list: null };
+    if (res.ok) {
+      try {
+        const body = await res.json();
+        if (Array.isArray(body)) return { status: res.status, list: body };
+      } catch (e) {}
+    }
+    res = await fetch("https://x.com/i/api/1.1/users/lookup.json", {
+      method: "POST",
+      credentials: "include",
+      headers: Object.assign({}, hdr, { "content-type": "application/x-www-form-urlencoded" }),
+      body: "include_entities=false&screen_name=" + q,
+    });
+    if (res.status === 429) {
+      await sleep(20000);
+      return { status: 429, list: null };
+    }
+    if (res.status === 401 || res.status === 403) return { status: res.status, list: null };
+    if (!res.ok) return { status: res.status, list: null };
+    try {
+      const body = await res.json();
+      return { status: res.status, list: Array.isArray(body) ? body : null };
+    } catch (e) {
+      return { status: res.status, list: null };
+    }
+  };
+  const showOne = async (h) => {
+    const url = "https://x.com/i/api/1.1/users/show.json?screen_name=" + encodeURIComponent(h);
     let res = await fetch(url, { method: "GET", credentials: "include", headers: headers() });
     if (res.status === 429) {
-      await sleep(12000);
+      await sleep(20000);
       res = await fetch(url, { method: "GET", credentials: "include", headers: headers() });
     }
-    return res;
+    if (res.status === 404) return { gone: true, h: h };
+    if (!res.ok) return null;
+    try {
+      const u = await res.json();
+      if (u && Array.isArray(u.errors)) {
+        const code = u.errors[0] && u.errors[0].code;
+        if (code === 50 || code === 63 || code === 34) return { gone: true, h: h };
+        return null;
+      }
+      if (u && (u.screen_name || u.id_str)) return rowOf(u);
+    } catch (e) {}
+    return null;
   };
   (async () => {
-    const BATCH = 100;
+    const BATCH = 20;
     for (let i = 0; i < handles.length; i += BATCH) {
       await waitVisible();
       const chunk = handles.slice(i, i + BATCH);
       try {
-        const res = await lookup(chunk);
-        if (res.status === 401 || res.status === 403) {
+        const got = await lookup(chunk);
+        if (got.status === 401 || got.status === 403) {
           alert("フォロー棚: Xがこの調べ方を拒みました。ログインし直してから、もう一度コードを貼ってください。");
           send("done", []);
           return;
         }
-        const got = {};
-        if (res.ok) {
-          const body = await res.json();
-          const list = Array.isArray(body) ? body : [];
-          const profiles = [];
-          list.forEach((u) => {
+        const profiles = [];
+        if (got.list) {
+          const seen = {};
+          got.list.forEach((u) => {
             const row = rowOf(u);
             if (!row.h) return;
-            got[row.h.toLowerCase()] = 1;
+            seen[row.h.toLowerCase()] = 1;
             profiles.push(row);
           });
-          chunk.forEach((h) => {
-            if (!got[h.toLowerCase()]) profiles.push({ h: h, miss: true });
-          });
-          done += chunk.length;
-          send("progress", profiles);
-        } else {
-          const profiles = chunk.map((h) => ({ h: h, miss: true }));
-          done += chunk.length;
-          send("progress", profiles);
+          const missing = chunk.filter((h) => !seen[h.toLowerCase()]);
+          if (missing.length && missing.length <= 5) {
+            for (let m = 0; m < missing.length; m++) {
+              const one = await showOne(missing[m]);
+              if (one && one.gone) profiles.push({ h: missing[m], gone: true });
+              else if (one && one.h) profiles.push(one);
+              await sleep(250);
+            }
+          }
         }
+        done += chunk.length;
+        send("progress", profiles);
       } catch (e) {
         done += chunk.length;
-        send("progress", chunk.map((h) => ({ h: h, miss: true })));
+        send("progress", []);
       }
-      await sleep(700);
+      await sleep(800);
     }
     send("done", []);
-    alert("フォロー棚: " + handles.length + "人の生存確認が終わりました。元のタブに戻ってください。");
+    alert("フォロー棚: " + handles.length + "人の生存確認が終わりました。見つからなかった人は未確認のままです。元のタブに戻ってください。");
   })();
 })();`;
 
@@ -165,12 +209,14 @@ export type ScanRow = {
   lp?: number | null;
   lt?: string;
   miss?: boolean;
+  gone?: boolean;
 };
 
 export function scanRowToSnapshot(row: ScanRow): ProfileSnapshot | null {
   const handle = normalizeHandle(String(row.h || ""));
   if (!isValidHandle(handle)) return null;
-  if (row.miss) {
+  if (row.miss && !row.gone) return null;
+  if (row.gone || row.miss) {
     return {
       handle,
       userId: "",

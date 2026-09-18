@@ -38,9 +38,9 @@ export function applyFilters(people: Person[], filters: RosterFilters, tokens: s
 }
 
 function lastKey(p: Person): number {
+  if (p.lastPostAt != null) return p.lastPostAt;
   if (p.lookupFailed) return Number.NEGATIVE_INFINITY;
-  if (p.lastPostAt == null) return Number.POSITIVE_INFINITY - 1;
-  return p.lastPostAt;
+  return Number.POSITIVE_INFINITY - 1;
 }
 
 export function sortPeople(people: Person[], sort: SortKey): Person[] {

@@ -50,6 +50,7 @@ type RosterState = {
   ingestRoster: (incoming: Person[]) => number;
   markFollowers: (handles: string[]) => number;
   mergeProfiles: (snaps: ProfileSnapshot[]) => number;
+  repairMassFalseDead: () => number;
   updatePerson: (
     handle: string,
     patch: Partial<Pick<Person, "note" | "tags" | "followsYou">>,
@@ -192,12 +193,30 @@ export const useRoster = create<RosterState>()(
             source: p.source,
             lastPostAt: snap.lastPostAt != null ? snap.lastPostAt : p.lastPostAt,
             lastPostText: snap.lastPostText || p.lastPostText,
+            lookupFailed: snap.lastPostAt != null ? false : snap.lookupFailed,
             enrichedAt: snap.lookupFailed ? p.enrichedAt : now,
             lastCheckedAt: now,
           });
         });
         set({ people });
         return n;
+      },
+      repairMassFalseDead: () => {
+        const people = get().people;
+        if (people.length < 40) return 0;
+        let dead = 0;
+        for (const p of people) {
+          if (p.lookupFailed && p.lastPostAt == null) dead += 1;
+        }
+        if (dead < people.length * 0.35) return 0;
+        set({
+          people: people.map((p) =>
+            p.lookupFailed && p.lastPostAt == null
+              ? normalizePerson({ ...p, lookupFailed: false })
+              : p,
+          ),
+        });
+        return dead;
       },
       updatePerson: (handle, patch) => {
         const k = keyOf(handle);

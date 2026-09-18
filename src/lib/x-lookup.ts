@@ -225,7 +225,12 @@ async function fetchFxUser(handle: string): Promise<{ status: number; user: FxUs
 
 async function fetchProfile(handle: string): Promise<ProfileSnapshot> {
   const [fx, last] = await Promise.all([fetchFxUser(handle), fetchLastPost(handle)]);
-  if (fx.status === 404) return emptySnap(handle, true);
+  if (fx.status === 404) {
+    if (last) {
+      return { ...emptySnap(handle, false), lastPostAt: last.at, lastPostText: last.text };
+    }
+    return emptySnap(handle, false);
+  }
   if (fx.user) return toSnapshot(handle, fx.user, fx.user.protected ? null : last);
   if (last) {
     return {

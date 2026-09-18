@@ -19,9 +19,8 @@ export function formatLastPost(
   ts: number | null,
   opts?: { lookupFailed?: boolean; protected?: boolean },
 ): string {
-  if (opts?.lookupFailed) return "停止";
   if (opts?.protected && (ts == null || !Number.isFinite(ts))) return "鍵";
-  if (ts == null || !Number.isFinite(ts)) return "未確認";
+  if (ts == null || !Number.isFinite(ts)) return opts?.lookupFailed ? "停止" : "未確認";
   const days = (Date.now() - ts) / 86_400_000;
   if (days < 0.6) return "今日";
   if (days < 1.6) return "昨日";

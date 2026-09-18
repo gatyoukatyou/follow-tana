@@ -120,3 +120,25 @@ describe("removePeople", () => {
     expect(useRoster.getState().selected).toEqual(["bob"]);
   });
 });
+
+describe("repairMassFalseDead", () => {
+  it("停止が大半なら未確認に戻す", () => {
+    const people = Array.from({ length: 50 }, (_, i) =>
+      person(`u${i}`, { lookupFailed: i > 2, lastPostAt: i === 0 ? 1 : null }),
+    );
+    reset(people);
+    expect(useRoster.getState().repairMassFalseDead()).toBe(47);
+    expect(byHandle("u0").lookupFailed).toBe(false);
+    expect(byHandle("u0").lastPostAt).toBe(1);
+    expect(byHandle("u3").lookupFailed).toBe(false);
+  });
+
+  it("停止が少なければ触らない", () => {
+    reset([
+      person("alice", { lookupFailed: true }),
+      person("bob", { lookupFailed: false, lastPostAt: 1 }),
+    ]);
+    expect(useRoster.getState().repairMassFalseDead()).toBe(0);
+    expect(byHandle("alice").lookupFailed).toBe(true);
+  });
+});

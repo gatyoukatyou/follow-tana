@@ -97,11 +97,11 @@ export const EMPTY_FILTERS: RosterFilters = {
 };
 
 export function activityOf(p: Person): Activity {
-  if (p.lookupFailed) return "dead";
-  if (p.protected) return "protected";
   if (p.lastPostAt != null) {
     return Date.now() - p.lastPostAt >= DORMANT_AFTER_MS ? "dormant" : "alive";
   }
+  if (p.protected) return "protected";
+  if (p.lookupFailed) return "dead";
   return "unknown";
 }
 

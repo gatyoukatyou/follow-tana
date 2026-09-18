@@ -35,8 +35,8 @@ describe("activityOf", () => {
     expect(activityOf(person({ lastPostAt: null }))).toBe("unknown");
   });
 
-  it("タイムアウトは未確認のまま（停止にしない）", () => {
-    expect(activityOf(person({ lookupFailed: false, lastPostAt: null }))).toBe("unknown");
+  it("最終投稿があれば、調べ損ねフラグより生存を優先する", () => {
+    expect(activityOf(person({ lookupFailed: true, lastPostAt: Date.now() - DAY }))).toBe("alive");
   });
 });
 

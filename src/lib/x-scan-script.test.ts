@@ -12,8 +12,12 @@ describe("parseScanProfiles", () => {
     expect(p?.lookupFailed).toBe(false);
   });
 
-  it("見つからない人は停止にする", () => {
-    const [p] = parseScanProfiles([{ h: "gone", miss: true }]);
+  it("応答に無い人は未確認のまま（停止にしない）", () => {
+    expect(parseScanProfiles([{ h: "gone", miss: true }])).toEqual([]);
+  });
+
+  it("削除が確認できた人だけ停止にする", () => {
+    const [p] = parseScanProfiles([{ h: "gone", gone: true }]);
     expect(p?.lookupFailed).toBe(true);
     expect(p?.lastPostAt).toBeNull();
   });

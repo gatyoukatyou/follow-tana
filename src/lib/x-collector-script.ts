@@ -254,47 +254,99 @@ const COLLECTOR = `(() => {
       try { if (window.opener) window.opener.postMessage(payload, "*"); } catch (e) {}
       document.title = "確認 " + scanned + "/" + all.length + "人";
     };
+    const lookup = async (chunk) => {
+      const q = encodeURIComponent(chunk.join(","));
+      const hdr = headers();
+      const getUrl = "https://x.com/i/api/1.1/users/lookup.json?include_entities=false&screen_name=" + q;
+      let res = await orig(getUrl, { method: "GET", credentials: "include", headers: hdr });
+      if (res.status === 429) {
+        document.title = "制限待ち… 確認 " + scanned + "/" + all.length;
+        await sleep(20000);
+        res = await orig(getUrl, { method: "GET", credentials: "include", headers: hdr });
+      }
+      if (res.status === 401 || res.status === 403) return { status: res.status, list: null };
+      if (res.ok) {
+        try {
+          const body = await res.json();
+          if (Array.isArray(body)) return { status: res.status, list: body };
+        } catch (e) {}
+      }
+      res = await orig("https://x.com/i/api/1.1/users/lookup.json", {
+        method: "POST",
+        credentials: "include",
+        headers: Object.assign({}, hdr, { "content-type": "application/x-www-form-urlencoded" }),
+        body: "include_entities=false&screen_name=" + q,
+      });
+      if (res.status === 429) {
+        await sleep(20000);
+        return { status: 429, list: null };
+      }
+      if (res.status === 401 || res.status === 403) return { status: res.status, list: null };
+      if (!res.ok) return { status: res.status, list: null };
+      try {
+        const body = await res.json();
+        return { status: res.status, list: Array.isArray(body) ? body : null };
+      } catch (e) {
+        return { status: res.status, list: null };
+      }
+    };
+    const showOne = async (h) => {
+      const url = "https://x.com/i/api/1.1/users/show.json?screen_name=" + encodeURIComponent(h);
+      let res = await orig(url, { method: "GET", credentials: "include", headers: headers() });
+      if (res.status === 429) {
+        await sleep(20000);
+        res = await orig(url, { method: "GET", credentials: "include", headers: headers() });
+      }
+      if (res.status === 404) return { gone: true, h: h };
+      if (!res.ok) return null;
+      try {
+        const u = await res.json();
+        if (u && Array.isArray(u.errors)) {
+          const code = u.errors[0] && u.errors[0].code;
+          if (code === 50 || code === 63 || code === 34) return { gone: true, h: h };
+          return null;
+        }
+        if (u && (u.screen_name || u.id_str)) return rowOf(u);
+      } catch (e) {}
+      return null;
+    };
     sendScan([]);
-    const BATCH = 100;
+    const BATCH = 20;
     for (let i = 0; i < all.length; i += BATCH) {
       await waitVisible();
       const chunk = all.slice(i, i + BATCH);
-      const url =
-        "https://x.com/i/api/1.1/users/lookup.json?include_entities=false&screen_name=" +
-        encodeURIComponent(chunk.join(","));
       try {
-        let res = await orig(url, { method: "GET", credentials: "include", headers: headers() });
-        if (res.status === 429) {
-          document.title = "制限待ち… 確認 " + scanned + "/" + all.length;
-          await sleep(12000);
-          res = await orig(url, { method: "GET", credentials: "include", headers: headers() });
-        }
-        if (res.status === 401 || res.status === 403) {
+        const got = await lookup(chunk);
+        if (got.status === 401 || got.status === 403) {
           alert("フォロー棚: 名簿は取れましたが、最終投稿の一括取得をXが拒みました。デスクの「生存確認」からもう一度調べてください。");
           return scanned;
         }
-        const got = {};
         const profiles = [];
-        if (res.ok) {
-          const body = await res.json();
-          const listU = Array.isArray(body) ? body : [];
-          listU.forEach((u) => {
+        if (got.list) {
+          const seen = {};
+          got.list.forEach((u) => {
             const row = rowOf(u);
             if (!row.h) return;
-            got[row.h.toLowerCase()] = 1;
+            seen[row.h.toLowerCase()] = 1;
             profiles.push(row);
           });
+          const missing = chunk.filter((h) => !seen[h.toLowerCase()]);
+          if (missing.length && missing.length <= 5) {
+            for (let m = 0; m < missing.length; m++) {
+              const one = await showOne(missing[m]);
+              if (one && one.gone) profiles.push({ h: missing[m], gone: true });
+              else if (one && one.h) profiles.push(one);
+              await sleep(250);
+            }
+          }
         }
-        chunk.forEach((h) => {
-          if (!got[h.toLowerCase()]) profiles.push({ h: h, miss: true });
-        });
         scanned += chunk.length;
         sendScan(profiles);
       } catch (e) {
         scanned += chunk.length;
-        sendScan(chunk.map((h) => ({ h: h, miss: true })));
+        sendScan([]);
       }
-      await sleep(700);
+      await sleep(800);
     }
     return scanned;
   };
