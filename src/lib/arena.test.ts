@@ -1,185 +1,335 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  DAILY_UNFOLLOW_QUOTA,
-  applyVerdicts,
-  createArenaTracker,
-  demoRound,
-  demoSchedule,
-  dormantPlaceholderLp,
-  emptyStats,
+  ARENA_COMBO_MIN,
+  ARENA_PIT_CAP,
+  applyScanMessage,
+  classifyRow,
+  countdownMs,
   formatCountdown,
-  intervalMsLeft,
-  isSweep,
+  initialArenaState,
   judgeRound,
-  playDemo,
+  normalizeResetAt,
+  parseArenaMessage,
   quotaProgress,
-  quotaReached,
-  sinceStartMs,
+  sinceToMs,
+  type ScanArenaMessage,
 } from "@/lib/arena";
 
+const SINCE = "2025-09-18";
+const SINCE_MS = Date.parse("2025-09-18T00:00:00Z");
+const DAY = 86_400_000;
+
+function handles(n: number, prefix = "tana_t"): string[] {
+  return Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
+}
+
+function progress(
+  round: number,
+  checked: string[],
+  profiles: ScanArenaMessage["profiles"],
+  rl: ScanArenaMessage["rl"] = { remaining: 50 - round, limit: 50, resetAt: 1_000_000 },
+): ScanArenaMessage {
+  return { type: "progress", round, checked, since: SINCE, profiles, rl };
+}
+
+describe("sinceToMs / normalizeResetAt", () => {
+  it("since は UTC 0:00 にする", () => {
+    expect(sinceToMs(SINCE)).toBe(SINCE_MS);
+    expect(sinceToMs("2025/09/18")).toBeNull();
+    expect(sinceToMs(null)).toBeNull();
+  });
+
+  it("reset は秒でも ms でも受ける", () => {
+    expect(normalizeResetAt(1_789_775_405)).toBe(1_789_775_405_000);
+    expect(normalizeResetAt("1789775405")).toBe(1_789_775_405_000);
+    expect(normalizeResetAt(1_789_775_405_000)).toBe(1_789_775_405_000);
+    expect(normalizeResetAt(0)).toBeNull();
+    expect(normalizeResetAt("x")).toBeNull();
+  });
+});
+
+describe("classifyRow", () => {
+  it("since 以降の投稿は生存、前は脱落", () => {
+    expect(classifyRow({ h: "a", lp: SINCE_MS + DAY }, SINCE_MS)).toBe("alive");
+    expect(classifyRow({ h: "a", lp: SINCE_MS }, SINCE_MS)).toBe("alive");
+    expect(classifyRow({ h: "a", lp: SINCE_MS - DAY }, SINCE_MS)).toBe("dormant");
+  });
+
+  it("消えた人は消失、行が無い・miss・lp 無しは判定保留", () => {
+    expect(classifyRow({ h: "a", gone: true }, SINCE_MS)).toBe("gone");
+    expect(classifyRow(undefined, SINCE_MS)).toBe("pending");
+    expect(classifyRow({ h: "a", miss: true }, SINCE_MS)).toBe("pending");
+    expect(classifyRow({ h: "a", k: true, lp: null }, SINCE_MS)).toBe("pending");
+  });
+
+  it("since が無ければ lp があるだけで生存扱い（日付比較ができない）", () => {
+    expect(classifyRow({ h: "a", lp: 1 }, null)).toBe("alive");
+  });
+});
+
 describe("judgeRound", () => {
-  it("lp が since 以降なら生存", () => {
-    const r = judgeRound({
-      round: 1,
-      since: "2025-09-19",
-      checked: ["alice"],
-      profiles: [{ h: "alice", lp: sinceStartMs("2025-09-19")! + 1 }],
-    });
-    expect(r.rows).toEqual([{ handle: "alice", verdict: "survived" }]);
-    expect(r.pending).toEqual([]);
+  it("checked の順で駒を作り、ハンドルは大文字小文字を無視して突き合わせる", () => {
+    const { figures, counts } = judgeRound(
+      ["Alice", "bob", "carol", "dave"],
+      [
+        { h: "alice", lp: SINCE_MS + DAY },
+        { h: "BOB", lp: SINCE_MS - DAY },
+        { h: "carol", gone: true },
+      ],
+      SINCE,
+    );
+    expect(figures.map((f) => f.status)).toEqual(["alive", "dormant", "gone", "pending"]);
+    expect(counts).toEqual({ alive: 1, dormant: 1, gone: 1, pending: 1 });
   });
 
-  it("lp が since より前なら脱落", () => {
-    const r = judgeRound({
-      round: 1,
-      since: "2025-09-19",
-      checked: ["bob"],
-      profiles: [{ h: "bob", lp: sinceStartMs("2025-09-19")! - 1 }],
-    });
-    expect(r.rows).toEqual([{ handle: "bob", verdict: "fell" }]);
-  });
-
-  it("gone は消失", () => {
-    const r = judgeRound({ round: 1, since: "2025-09-19", checked: ["carol"], profiles: [{ h: "carol", gone: true }] });
-    expect(r.rows[0]!.verdict).toBe("vanished");
-  });
-
-  it("checked にいて profiles にいない人は保留", () => {
-    const r = judgeRound({ round: 1, since: "2025-09-19", checked: ["dave"], profiles: [] });
-    expect(r.rows).toEqual([]);
-    expect(r.pending).toEqual(["dave"]);
-  });
-
-  it("miss だけ（gone 無し）は保留", () => {
-    const r = judgeRound({ round: 1, since: "2025-09-19", checked: ["eve"], profiles: [{ h: "eve", miss: true }] });
-    expect(r.pending).toEqual(["eve"]);
-  });
-
-  it("大文字小文字を同一視する", () => {
-    const r = judgeRound({ round: 1, since: "2025-09-19", checked: ["Alice"], profiles: [{ h: "ALICE", lp: 1 }] });
-    expect(r.rows[0]!.verdict).toBe("fell");
-  });
-
-  it("検索に出なかった人に疑似 lp を付けても脱落になる", () => {
-    const lp = dormantPlaceholderLp("2025-09-19");
-    expect(lp).toBe(sinceStartMs("2025-09-19")! - 1);
-    const r = judgeRound({ round: 1, since: "2025-09-19", checked: ["frank"], profiles: [{ h: "frank", lp: lp! }] });
-    expect(r.rows[0]!.verdict).toBe("fell");
+  it("checked の重複と不正なハンドルは落とす", () => {
+    const { figures } = judgeRound(["alice", "@alice", "bad handle", ""], [], SINCE);
+    expect(figures.map((f) => f.handle)).toEqual(["alice"]);
   });
 });
 
-describe("applyVerdicts / quota", () => {
-  it("脱落連続でコンボが伸び、生存で切れる", () => {
-    let s = emptyStats();
-    s = applyVerdicts(s, judgeRound({ round: 1, since: "2025-09-19", checked: ["a", "b"], profiles: [{ h: "a", lp: 1 }, { h: "b", lp: 1 }] }));
-    expect(s.combo).toBe(2);
-    s = applyVerdicts(s, judgeRound({ round: 2, since: "2025-09-19", checked: ["c", "d"], profiles: [{ h: "c", lp: Date.now() }, { h: "d", lp: 1 }] }));
+describe("parseArenaMessage", () => {
+  it("生存確認の message だけ受ける", () => {
+    expect(parseArenaMessage(null)).toBeNull();
+    expect(
+      parseArenaMessage({ source: "other", op: "Scan", type: "progress", checked: [] }),
+    ).toBeNull();
+    expect(
+      parseArenaMessage({ source: "follow-tana", op: "Following", type: "progress", checked: [] }),
+    ).toBeNull();
+    expect(parseArenaMessage({ source: "follow-tana", op: "Scan", type: "progress" })).toBeNull();
+    expect(
+      parseArenaMessage({ source: "follow-tana", op: "Scan", type: "weird", checked: [] }),
+    ).toBeNull();
+  });
+
+  it("round / since / rl を正規化する", () => {
+    const m = parseArenaMessage({
+      source: "follow-tana",
+      op: "Scan",
+      type: "progress",
+      round: "3",
+      checked: ["@Alice", "bob", "bob"],
+      since: SINCE,
+      profiles: [{ h: "alice", lp: 1 }, null, "junk"],
+      rl: { remaining: "38", limit: 50, resetAt: 1_789_775_405 },
+    });
+    expect(m).not.toBeNull();
+    expect(m?.round).toBe(3);
+    expect(m?.checked).toEqual(["Alice", "bob"]);
+    expect(m?.since).toBe(SINCE);
+    expect(m?.profiles).toHaveLength(1);
+    expect(m?.rl).toEqual({ remaining: 38, limit: 50, resetAt: 1_789_775_405_000 });
+  });
+
+  it("since が変な形なら null、rl が欠けていれば null", () => {
+    const m = parseArenaMessage({
+      source: "follow-tana",
+      op: "Scan",
+      type: "interval",
+      checked: [],
+      since: "昨日",
+      rl: { remaining: 0 },
+    });
+    expect(m?.since).toBeNull();
+    expect(m?.rl).toBeNull();
+    expect(m?.round).toBe(0);
+  });
+});
+
+describe("applyScanMessage", () => {
+  it("1ラウンドで舞台・合計・ピットが更新される", () => {
+    const s0 = initialArenaState();
+    const checked = handles(20);
+    const profiles = [
+      ...checked.slice(0, 5).map((h) => ({ h, lp: SINCE_MS + DAY })),
+      ...checked.slice(5, 17).map((h) => ({ h, lp: SINCE_MS - DAY })),
+      { h: checked[17], gone: true },
+    ];
+    const s1 = applyScanMessage(s0, progress(1, checked, profiles), 123);
+    expect(s1.phase).toBe("running");
+    expect(s1.round).toBe(1);
+    expect(s1.since).toBe(SINCE);
+    expect(s1.stage).toHaveLength(20);
+    expect(s1.lastRound).toEqual({ alive: 5, dormant: 12, gone: 1, pending: 2 });
+    expect(s1.totals).toEqual({ checked: 20, alive: 5, dormant: 12, gone: 1, pending: 2 });
+    expect(s1.pit).toHaveLength(12);
+    expect(s1.pit[0]).toBe(checked[16]); // 新しい順
+    expect(s1.combo).toBe(1);
+    expect(s1.bestDormant).toBe(12);
+    expect(s1.banner).toBeNull();
+    expect(s1.rl?.remaining).toBe(49);
+    expect(s1.updatedAt).toBe(123);
+  });
+
+  it("round が無ければ連番で進む", () => {
+    const s1 = applyScanMessage(initialArenaState(), progress(0, handles(3), []));
+    const s2 = applyScanMessage(s1, progress(0, handles(3, "tana_u"), []));
+    expect(s2.round).toBe(2);
+  });
+
+  it("全員脱落で「全滅」バナー", () => {
+    const checked = handles(20);
+    const s1 = applyScanMessage(
+      initialArenaState(),
+      progress(
+        1,
+        checked,
+        checked.map((h) => ({ h, lp: SINCE_MS - DAY })),
+      ),
+    );
+    expect(s1.banner).toEqual({ kind: "wipeout", round: 1 });
+  });
+
+  it("消失も含めて全員いなくなれば全滅、少人数の組では全滅にしない", () => {
+    const checked = handles(20);
+    const s1 = applyScanMessage(
+      initialArenaState(),
+      progress(1, checked, [
+        ...checked.slice(0, 19).map((h) => ({ h, lp: SINCE_MS - DAY })),
+        { h: checked[19], gone: true },
+      ]),
+    );
+    expect(s1.banner?.kind).toBe("wipeout");
+    const small = handles(5);
+    const s2 = applyScanMessage(
+      initialArenaState(),
+      progress(
+        1,
+        small,
+        small.map((h) => ({ h, lp: SINCE_MS - DAY })),
+      ),
+    );
+    expect(s2.banner).toBeNull();
+  });
+
+  it("脱落が続くとコンボ、途切れると0に戻る", () => {
+    const many = (round: number) => {
+      const c = handles(20, `tana_c${round}_`);
+      return progress(
+        round,
+        c,
+        c.slice(0, ARENA_COMBO_MIN).map((h) => ({ h, lp: SINCE_MS - DAY })),
+      );
+    };
+    const few = (round: number) => {
+      const c = handles(20, `tana_f${round}_`);
+      return progress(
+        round,
+        c,
+        c.slice(0, 2).map((h) => ({ h, lp: SINCE_MS - DAY })),
+      );
+    };
+    let s = applyScanMessage(initialArenaState(), many(1));
     expect(s.combo).toBe(1);
-    expect(s.bestCombo).toBe(2);
-    expect(s.fell).toBe(3);
-    expect(s.survived).toBe(1);
+    expect(s.banner).toBeNull();
+    s = applyScanMessage(s, many(2));
+    expect(s.combo).toBe(2);
+    expect(s.banner).toEqual({ kind: "combo", round: 2 });
+    s = applyScanMessage(s, few(3));
+    expect(s.combo).toBe(0);
+    expect(s.banner).toBeNull();
   });
 
-  it("ノルマ400に達したら達成", () => {
-    let s = emptyStats();
-    const many = Array.from({ length: 20 }, (_, i) => `u${i}`);
-    const profiles = many.map((h) => ({ h, lp: 1 }));
-    for (let i = 0; i < 20; i++) {
-      s = applyVerdicts(s, judgeRound({ round: i + 1, since: "2025-09-19", checked: many, profiles }));
+  it("ノルマ到達で一度だけ「ノルマ」バナー、全滅より優先", () => {
+    let s = initialArenaState(30);
+    const wipe = (round: number) => {
+      const c = handles(20, `tana_q${round}_`);
+      return progress(
+        round,
+        c,
+        c.map((h) => ({ h, lp: SINCE_MS - DAY })),
+      );
+    };
+    s = applyScanMessage(s, wipe(1), 10);
+    expect(s.banner?.kind).toBe("wipeout");
+    expect(s.quotaReachedAt).toBeNull();
+    s = applyScanMessage(s, wipe(2), 20);
+    expect(s.banner).toEqual({ kind: "quota", round: 2 });
+    expect(s.quotaReachedAt).toBe(20);
+    s = applyScanMessage(s, wipe(3), 30);
+    expect(s.banner?.kind).toBe("wipeout");
+    expect(s.quotaReachedAt).toBe(20);
+    expect(quotaProgress(s)).toEqual({ done: 60, quota: 30, ratio: 1 });
+  });
+
+  it("ピットは上限で切る", () => {
+    let s = initialArenaState();
+    for (let r = 1; r <= 10; r++) {
+      const c = handles(20, `tana_p${r}_`);
+      s = applyScanMessage(
+        s,
+        progress(
+          r,
+          c,
+          c.map((h) => ({ h, lp: SINCE_MS - DAY })),
+        ),
+      );
     }
-    expect(s.fell).toBe(400);
-    expect(quotaReached(s)).toBe(true);
-    expect(quotaProgress(s)).toBe(1);
+    expect(s.totals.dormant).toBe(200);
+    expect(s.pit).toHaveLength(ARENA_PIT_CAP);
+    expect(s.pit[0]).toBe("tana_p10_20");
   });
 
-  it("ノルマ未達の進捗は割合", () => {
-    const s = applyVerdicts(emptyStats(), judgeRound({ round: 1, since: "2025-09-19", checked: ["a"], profiles: [{ h: "a", lp: 1 }] }));
-    expect(quotaProgress(s)).toBe(1 / DAILY_UNFOLLOW_QUOTA);
+  it("interval / done は舞台を残したまま局面だけ変える", () => {
+    const checked = handles(20);
+    let s = applyScanMessage(
+      initialArenaState(),
+      progress(
+        1,
+        checked,
+        checked.map((h) => ({ h, lp: SINCE_MS - DAY })),
+      ),
+    );
+    s = applyScanMessage(
+      s,
+      {
+        type: "interval",
+        round: 1,
+        checked: [],
+        since: null,
+        profiles: [],
+        rl: { remaining: 0, limit: 50, resetAt: 5000 },
+      },
+      100,
+    );
+    expect(s.phase).toBe("interval");
+    expect(s.stage).toHaveLength(20);
+    expect(s.since).toBe(SINCE);
+    expect(s.banner).toBeNull();
+    expect(s.rl).toEqual({ remaining: 0, limit: 50, resetAt: 5000 });
+    expect(countdownMs(s.rl, 2000)).toBe(3000);
+    s = applyScanMessage(s, progress(2, handles(20, "tana_v"), []));
+    expect(s.phase).toBe("running");
+    s = applyScanMessage(s, {
+      type: "done",
+      round: 2,
+      checked: [],
+      since: null,
+      profiles: [],
+      rl: null,
+    });
+    expect(s.phase).toBe("done");
+    expect(s.rl?.remaining).toBe(48);
   });
-});
 
-describe("isSweep", () => {
-  it("1ラウンド全員脱落で true", () => {
-    const r = judgeRound({ round: 1, since: "2025-09-19", checked: ["a", "b"], profiles: [{ h: "a", lp: 1 }, { h: "b", lp: 2 }] });
-    expect(isSweep(r)).toBe(true);
-  });
-
-  it("生存が混ざれば false", () => {
-    const r = judgeRound({ round: 1, since: "2025-09-19", checked: ["a", "b"], profiles: [{ h: "a", lp: 1 }, { h: "b", lp: Date.now() }] });
-    expect(isSweep(r)).toBe(false);
+  it("人のいない progress は心拍として枠だけ更新する", () => {
+    const s = applyScanMessage(
+      initialArenaState(),
+      progress(0, [], [], { remaining: 10, limit: 50, resetAt: 1 }),
+    );
+    expect(s.phase).toBe("running");
+    expect(s.round).toBe(0);
+    expect(s.rl?.remaining).toBe(10);
   });
 });
 
 describe("countdown", () => {
-  it("reset までの残りをミリ秒で返す", () => {
-    const now = Date.now();
-    expect(intervalMsLeft(Math.floor(now / 1000) + 60, now)).toBeGreaterThan(59_000);
-    expect(intervalMsLeft(Math.floor(now / 1000) - 5, now)).toBe(0);
-    expect(intervalMsLeft(null, now)).toBeNull();
-  });
-
-  it("M:SS 表示", () => {
+  it("残り時間を mm:ss にする", () => {
+    expect(formatCountdown(0)).toBe("00:00");
     expect(formatCountdown(754_000)).toBe("12:34");
-    expect(formatCountdown(0)).toBe("0:00");
-    expect(formatCountdown(-1)).toBe("0:00");
-    expect(formatCountdown(null)).toBe("0:00");
-  });
-});
-
-describe("demo", () => {
-  it("デモ1ラウンドが判定として成立する", () => {
-    const input = demoRound({ round: 1, since: "2025-09-19", survived: 2, fell: 3, vanished: 1, pending: 1 });
-    const r = judgeRound(input);
-    const by = { survived: 0, fell: 0, vanished: 0 };
-    for (const row of r.rows) by[row.verdict] += 1;
-    expect(by.survived).toBe(2);
-    expect(by.fell).toBe(3);
-    expect(by.vanished).toBe(1);
-    expect(r.pending).toHaveLength(1);
-  });
-
-  it("8ラウンド分の台本がある", () => {
-    expect(demoSchedule()).toHaveLength(6);
-    expect(demoSchedule()[0]!.round).toBe(1);
-  });
-});
-
-describe("quota 定数", () => {
-  it("1日の解除上限は400", () => {
-    expect(DAILY_UNFOLLOW_QUOTA).toBe(400);
-  });
-});
-
-describe("createArenaTracker", () => {
-  it("ラウンド入力を集計して統計まで通す", () => {
-    const t = createArenaTracker();
-    t.accept({ round: 1, since: "2025-09-19", checked: ["a", "b"], profiles: [{ h: "a", lp: 1 }, { h: "b", lp: 2 }] });
-    t.accept({ round: 2, since: "2025-09-19", checked: ["c"], profiles: [{ h: "c", lp: Date.now() }] });
-    expect(t.rounds).toHaveLength(2);
-    expect(t.stats.fell).toBe(2);
-    expect(t.stats.survived).toBe(1);
-    expect(t.stats.combo).toBe(0);
-    expect(t.stats.bestCombo).toBe(2);
-  });
-});
-
-describe("playDemo", () => {
-  it("delayMs=0 で台本どおり全ラウンドを即時 emit する", async () => {
-    const schedule = demoSchedule();
-    const got: number[] = [];
-    const played = await playDemo(schedule, (input, i) => got.push(input.round + i * 0), { delayMs: 0 });
-    expect(played).toBe(schedule.length);
-    expect(got).toEqual(schedule.map((_, i) => i + 1));
-  });
-
-  it("signal.stopped で中断する", async () => {
-    const schedule = demoSchedule();
-    const signal = { stopped: false };
-    const emit = vi.fn();
-    const done = playDemo(schedule, emit, { delayMs: 20, signal });
-    signal.stopped = true;
-    const played = await done;
-    expect(played).toBe(1);
-    expect(emit).toHaveBeenCalledTimes(1);
+    expect(formatCountdown(59_400)).toBe("01:00");
+    expect(countdownMs(null)).toBe(0);
+    expect(countdownMs({ remaining: 0, limit: 50, resetAt: 100 }, 200)).toBe(0);
   });
 });

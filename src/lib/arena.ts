@@ -1,259 +1,278 @@
-/**
- * ○×落とし穴アリーナ — 純ロジック。
- *
- * 生存確認スクリプトの postMessage（op:"Scan"）を表示層で読み、ラウンド判定・
- * コンボ・今日のノルマ・インターバル残り時間に変換する。React に依存しない。
- *
- * 判定はデスク側で行う（x-scan-script との契約）:
- *   - gone:true                        → 消失
- *   - lp が since 以降                 → 生存
- *   - lp が since より前               → 脱落
- *   - checked にいて profiles にいない → 保留（飽和で取れず。次回持ち越し）
- */
+import { isValidHandle, normalizeHandle } from "@/lib/utils";
 import type { ScanRow } from "@/lib/x-scan-script";
 
-export type Verdict = "survived" | "fell" | "vanished" | "pending";
+/**
+ * ゲーム表示（○×落とし穴）の純ロジック。
+ *
+ * 生存確認スクリプトが postMessage で送る { source:"follow-tana", op:"Scan" } に
+ * 次の項目が入っていることを前提にする（use-x-bridge とは独立に同じ message を聞く）。
+ *
+ *   type:    "progress" | "interval" | "done"
+ *   round:   1始まりのラウンド番号（検索1回 = 1ラウンド）
+ *   checked: このラウンドで調べたハンドル
+ *   since:   検索に使った since 日付 "YYYY-MM-DD"
+ *   profiles: ScanRow[]（gone:true = 消失 / lp >= since = 生存 / lp < since = 脱落）
+ *   rl:      { remaining, limit, resetAt }  resetAt は epoch ms（秒で来ても受ける）
+ *
+ * checked にいて profiles にいない人は「判定保留」（飽和で取れず、次の組へ持ち越し）。
+ */
 
-export type ArenaJudgeInput = {
+export const ARENA_ROUND_SIZE = 20;
+/** 1日の解除目安（README の約400人）をゲームの「ノルマ」にする */
+export const ARENA_QUOTA = 400;
+/** ピットに残す駒の上限（DOM を軽く保つ） */
+export const ARENA_PIT_CAP = 120;
+/** 1ラウンドでこの人数以上が脱落するとコンボが続く */
+export const ARENA_COMBO_MIN = 10;
+
+export type FigureStatus = "waiting" | "alive" | "dormant" | "gone" | "pending";
+export type ArenaFigure = { handle: string; status: FigureStatus };
+export type ArenaPhase = "idle" | "running" | "interval" | "done";
+export type ArenaRateLimit = { remaining: number; limit: number; resetAt: number };
+export type ArenaBannerKind = "wipeout" | "combo" | "quota";
+export type ArenaBanner = { kind: ArenaBannerKind; round: number } | null;
+export type RoundCounts = { alive: number; dormant: number; gone: number; pending: number };
+
+export type ScanArenaMessage = {
+  type: "progress" | "interval" | "done";
   round: number;
-  since: string;
   checked: string[];
+  since: string | null;
   profiles: ScanRow[];
+  rl: ArenaRateLimit | null;
 };
 
-export type ArenaJudgeResult = {
+export type ArenaState = {
+  phase: ArenaPhase;
   round: number;
-  /** 判定が付いた人（pending は含まない） */
-  rows: { handle: string; verdict: Exclude<Verdict, "pending"> }[];
-  /** 保留したハンドル */
-  pending: string[];
-};
-
-/** since（"YYYY-MM-DD"）を epoch ms の「その日の0時」に直す */
-export function sinceStartMs(since: string): number | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(since);
-  if (!m) return null;
-  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return Number.isFinite(t) ? t : null;
-}
-
-/** 検索で出なかった人に付ける疑似 lp：since の前日 0:00 */
-export function dormantPlaceholderLp(since: string): number | null {
-  const start = sinceStartMs(since);
-  return start == null ? null : start - 1;
-}
-
-function verdictOf(row: ScanRow, sinceMs: number): Exclude<Verdict, "pending"> {
-  if (row.gone) return "vanished";
-  if (row.lp != null && row.lp >= sinceMs) return "survived";
-  return "fell";
-}
-
-function rowLp(row: ScanRow, sinceMs: number): number {
-  return row.lp == null ? sinceMs - 1 : row.lp;
-}
-
-/**
- * 1ラウンド分のスキャン結果を判定に変える。
- * judged に無い人（checked だが profiles 無し）は pending。
- */
-export function judgeRound(input: ArenaJudgeInput): ArenaJudgeResult {
-  const sinceMs = sinceStartMs(input.since) ?? 0;
-  const byHandle = new Map<string, ScanRow>();
-  for (const row of input.profiles) {
-    if (!row || typeof row !== "object") continue;
-    const h = String(row.h || "").replace(/^@/, "").toLowerCase();
-    if (h && !byHandle.has(h)) byHandle.set(h, row);
-  }
-  const rows: ArenaJudgeResult["rows"] = [];
-  const pending: string[] = [];
-  for (const handle of input.checked) {
-    const key = handle.toLowerCase();
-    const row = byHandle.get(key);
-    if (!row) {
-      pending.push(handle);
-      continue;
-    }
-    if (row.miss && !row.gone) {
-      pending.push(handle);
-      continue;
-    }
-    rows.push({ handle, verdict: verdictOf(row, sinceMs) });
-  }
-  return { round: input.round, rows, pending };
-}
-
-/** 投稿が「取れた人」の判定に使う。lp 無し（検索に出なかった）は呼び出し側が付ける */
-export function rowToPlaceholder(row: ScanRow, since: string): ScanRow {
-  if (row.lp != null) return row;
-  return { ...row, lp: dormantPlaceholderLp(since), lt: "1年以上投稿なし（検索で確認）" };
-}
-
-// ---- 進行統計 ----
-
-export type ArenaStats = {
-  survived: number;
-  fell: number;
-  vanished: number;
-  pending: number;
+  since: string | null;
+  stage: ArenaFigure[];
+  /** 脱落した人（新しい順、上限 ARENA_PIT_CAP） */
+  pit: string[];
+  totals: RoundCounts & { checked: number };
+  lastRound: RoundCounts;
   combo: number;
-  bestCombo: number;
+  bestDormant: number;
+  banner: ArenaBanner;
+  rl: ArenaRateLimit | null;
   quota: number;
-  dailyGoal: number;
+  quotaReachedAt: number | null;
+  updatedAt: number | null;
 };
 
-export const DAILY_UNFOLLOW_QUOTA = 400;
+const ZERO_COUNTS: RoundCounts = { alive: 0, dormant: 0, gone: 0, pending: 0 };
 
-export function emptyStats(dailyGoal = DAILY_UNFOLLOW_QUOTA): ArenaStats {
-  return { survived: 0, fell: 0, vanished: 0, pending: 0, combo: 0, bestCombo: 0, quota: 0, dailyGoal };
-}
-
-/**
- * 判定結果を統計に反映する。脱落が連続するとコンボが伸びる。
- * 生存・消失はコンボを切る。quota は脱落と消失の合計（外し候補の蓄積）。
- */
-export function applyVerdicts(stats: ArenaStats, result: ArenaJudgeResult): ArenaStats {
-  const next = { ...stats, pending: stats.pending + result.pending.length };
-  for (const { verdict } of result.rows) {
-    if (verdict === "fell") {
-      next.fell += 1;
-      next.combo += 1;
-      next.bestCombo = Math.max(next.bestCombo, next.combo);
-      next.quota += 1;
-    } else {
-      next.combo = 0;
-      if (verdict === "survived") next.survived += 1;
-      else next.vanished += 1;
-    }
-  }
-  next.bestCombo = Math.max(next.bestCombo, next.combo);
-  return next;
-}
-
-/** デモ・実スキャン共通の集計器。ラウンド入力 → judge → 統計反映までを1本化する */
-export function createArenaTracker(dailyGoal = DAILY_UNFOLLOW_QUOTA) {
-  let stats = emptyStats(dailyGoal);
-  const rounds: ArenaJudgeResult[] = [];
+export function initialArenaState(quota = ARENA_QUOTA): ArenaState {
   return {
-    get stats() {
-      return stats;
-    },
-    rounds,
-    /** 1ラウンド分の生スキャン入力を取り込み、判定と統計を返す */
-    accept(input: ArenaJudgeInput): ArenaJudgeResult {
-      const result = judgeRound(input);
-      rounds.push(result);
-      stats = applyVerdicts(stats, result);
-      return result;
-    },
+    phase: "idle",
+    round: 0,
+    since: null,
+    stage: [],
+    pit: [],
+    totals: { ...ZERO_COUNTS, checked: 0 },
+    lastRound: { ...ZERO_COUNTS },
+    combo: 0,
+    bestDormant: 0,
+    banner: null,
+    quota,
+    quotaReachedAt: null,
+    rl: null,
+    updatedAt: null,
   };
 }
 
-/** 1ラウンド全員脱落 */
-export function isSweep(result: ArenaJudgeResult): boolean {
-  return result.rows.length > 0 && result.rows.every((r) => r.verdict === "fell");
+const SINCE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** since "YYYY-MM-DD" を UTC 0:00 の epoch ms にする。不正なら null */
+export function sinceToMs(since: string | null | undefined): number | null {
+  if (!since || !SINCE_RE.test(since)) return null;
+  const t = Date.parse(`${since}T00:00:00Z`);
+  return Number.isFinite(t) ? t : null;
 }
 
-export function quotaProgress(stats: ArenaStats): number {
-  if (stats.dailyGoal <= 0) return 1;
-  return Math.min(1, stats.quota / stats.dailyGoal);
+function toNumber(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
 }
 
-export function quotaReached(stats: ArenaStats): boolean {
-  return stats.quota >= stats.dailyGoal;
+/** x-rate-limit-reset は秒で来ることがある。1e12 未満なら秒とみなして ms にする */
+export function normalizeResetAt(v: unknown): number | null {
+  const n = toNumber(v);
+  if (n == null || n <= 0) return null;
+  return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
 }
 
-// ---- インターバル・カウントダウン ----
-
-/** x-rate-limit-reset（epoch 秒）と現在時刻から残りミリ秒 */
-export function intervalMsLeft(resetAtEpochSec: number | null, nowMs: number): number | null {
-  if (resetAtEpochSec == null || !Number.isFinite(resetAtEpochSec)) return null;
-  return Math.max(0, resetAtEpochSec * 1000 - nowMs);
+export function parseArenaRateLimit(raw: unknown): ArenaRateLimit | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as { remaining?: unknown; limit?: unknown; resetAt?: unknown; reset?: unknown };
+  const remaining = toNumber(r.remaining);
+  const limit = toNumber(r.limit);
+  const resetAt = normalizeResetAt(r.resetAt ?? r.reset);
+  if (remaining == null || limit == null || resetAt == null) return null;
+  return { remaining: Math.max(0, remaining), limit: Math.max(0, limit), resetAt };
 }
 
-/** 残り時間の "M:SS" 表示。負は 0:00 */
-export function formatCountdown(ms: number | null): string {
-  if (ms == null || !Number.isFinite(ms) || ms <= 0) return "0:00";
-  const s = Math.ceil(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-// ---- デモ再生（UI実装を待たずに見た目を確認するための疑似ラウンド列） ----
-
-export type DemoRoundSpec = {
-  round: number;
-  since: string;
-  survived: number;
-  fell: number;
-  vanished: number;
-  pending: number;
-};
-
-/** 偽の ScanRow 列を作る。頭文字だけで表示する前提なので名前は h から作る */
-export function demoRound(spec: DemoRoundSpec, seedHandles?: string[]): ArenaJudgeInput {
-  const total = spec.survived + spec.fell + spec.vanished + spec.pending;
-  const handles =
-    seedHandles && seedHandles.length >= total
-      ? seedHandles.slice(0, total)
-      : Array.from({ length: total }, (_, i) => `demo${spec.round}_${i}`);
-  const sinceMs = sinceStartMs(spec.since) ?? 0;
-  const profiles: ScanRow[] = [];
-  let cursor = 0;
-  for (let i = 0; i < spec.survived && cursor < handles.length; i++, cursor++) {
-    profiles.push({ h: handles[cursor], lp: sinceMs + 30 * 24 * 3600 * 1000, lt: "デモ: 最近の投稿" });
+function uniqueHandles(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of raw) {
+    const h = normalizeHandle(String(v ?? ""));
+    if (!isValidHandle(h)) continue;
+    const k = h.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(h);
   }
-  for (let i = 0; i < spec.fell && cursor < handles.length; i++, cursor++) {
-    profiles.push({ h: handles[cursor], gone: false, lp: sinceMs - 24 * 3600 * 1000 });
-  }
-  for (let i = 0; i < spec.vanished && cursor < handles.length; i++, cursor++) {
-    profiles.push({ h: handles[cursor], gone: true });
-  }
-  const checked = handles.map((h) => h);
-  return { round: spec.round, since: spec.since, checked, profiles };
+  return out;
 }
-
-/** 休眠率5割想定の8ラウンド分デモ */
-export function demoSchedule(since = "2025-09-19"): DemoRoundSpec[] {
-  const shapes = [
-    { survived: 7, fell: 11, vanished: 1, pending: 1 },
-    { survived: 5, fell: 12, vanished: 3, pending: 0 },
-    { survived: 9, fell: 9, vanished: 2, pending: 0 },
-    { survived: 4, fell: 14, vanished: 2, pending: 0 },
-    { survived: 12, fell: 6, vanished: 2, pending: 0 },
-    { survived: 3, fell: 16, vanished: 1, pending: 0 },
-  ];
-  return shapes.map((s, i) => ({ round: i + 1, since, ...s }));
-}
-
-// ---- デモ再生（UIから呼ぶ駆動部。React に依存しない） ----
-
-export type DemoPlayerHandle = { stop: () => void };
 
 /**
- * デモ台本を順に emit する。UIはこのたびごとに judgeRound → applyVerdicts で
- * 数字を更新すれば、本物のスキャンと同じパイプラインで見た目を確認できる。
- * delayMs=0 で即時完走（テスト用）。既存コードには一切触れない。
+ * postMessage の data をゲーム用メッセージにする。
+ * 生存確認以外（取込・解除）や、round/checked を持たない古い形式は null。
  */
-export function playDemo(
-  schedule: DemoRoundSpec[],
-  emit: (input: ArenaJudgeInput, index: number) => void,
-  opts: { delayMs?: number; signal?: { stopped: boolean } } = {},
-): Promise<number> {
-  const delayMs = opts.delayMs ?? 2000;
-  const sleep = (ms: number) =>
-    ms <= 0 ? Promise.resolve() : new Promise((r) => setTimeout(r, ms));
-  let stopped = false;
-  if (opts.signal) {
-    opts.signal.stopped = false;
+export function parseArenaMessage(data: unknown): ScanArenaMessage | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (d.source !== "follow-tana" || d.op !== "Scan") return null;
+  const type = d.type;
+  if (type !== "progress" && type !== "interval" && type !== "done") return null;
+  if (!Array.isArray(d.checked)) return null;
+  const round = toNumber(d.round);
+  const since = typeof d.since === "string" && SINCE_RE.test(d.since) ? d.since : null;
+  return {
+    type,
+    round: round != null && round > 0 ? Math.floor(round) : 0,
+    checked: uniqueHandles(d.checked),
+    since,
+    profiles: Array.isArray(d.profiles)
+      ? (d.profiles.filter((p) => p && typeof p === "object") as ScanRow[])
+      : [],
+    rl: parseArenaRateLimit(d.rl),
+  };
+}
+
+/** 1行の判定。since が無いときは日付の比較ができないので lp があれば生存扱い */
+export function classifyRow(row: ScanRow | undefined, sinceMs: number | null): FigureStatus {
+  if (!row) return "pending";
+  if (row.gone) return "gone";
+  if (row.miss) return "pending";
+  if (typeof row.lp === "number" && Number.isFinite(row.lp)) {
+    if (sinceMs == null) return "alive";
+    return row.lp >= sinceMs ? "alive" : "dormant";
   }
-  return (async () => {
-    let played = 0;
-    for (let i = 0; i < schedule.length; i += 1) {
-      if (opts.signal?.stopped) break;
-      emit(demoRound(schedule[i]!), i);
-      played += 1;
-      if (i < schedule.length - 1) await sleep(delayMs);
-    }
-    return played;
-  })();
+  return "pending";
+}
+
+export function judgeRound(
+  checked: string[],
+  profiles: ScanRow[],
+  since: string | null,
+): { figures: ArenaFigure[]; counts: RoundCounts } {
+  const sinceMs = sinceToMs(since);
+  const byKey = new Map<string, ScanRow>();
+  for (const row of profiles) {
+    const h = normalizeHandle(String(row?.h ?? ""));
+    if (isValidHandle(h)) byKey.set(h.toLowerCase(), row);
+  }
+  const counts: RoundCounts = { ...ZERO_COUNTS };
+  const figures = uniqueHandles(checked).map((handle) => {
+    const status = classifyRow(byKey.get(handle.toLowerCase()), sinceMs);
+    if (status !== "waiting") counts[status] += 1;
+    return { handle, status };
+  });
+  return { figures, counts };
+}
+
+function bannerFor(
+  prev: ArenaState,
+  counts: RoundCounts,
+  roundSize: number,
+  round: number,
+  totalDormant: number,
+): { banner: ArenaBanner; combo: number; quotaReached: boolean } {
+  const combo = counts.dormant >= ARENA_COMBO_MIN ? prev.combo + 1 : 0;
+  const quotaReached = prev.quotaReachedAt == null && prev.quota > 0 && totalDormant >= prev.quota;
+  if (quotaReached) return { banner: { kind: "quota", round }, combo, quotaReached };
+  const wipeout = roundSize >= ARENA_ROUND_SIZE / 2 && counts.dormant + counts.gone === roundSize;
+  if (wipeout) return { banner: { kind: "wipeout", round }, combo, quotaReached };
+  if (combo >= 2) return { banner: { kind: "combo", round }, combo, quotaReached };
+  return { banner: null, combo, quotaReached };
+}
+
+export function applyScanMessage(
+  state: ArenaState,
+  msg: ScanArenaMessage,
+  now: number = Date.now(),
+): ArenaState {
+  const rl = msg.rl ?? state.rl;
+  const since = msg.since ?? state.since;
+  if (msg.type === "done") {
+    return { ...state, phase: "done", rl, since, banner: null, updatedAt: now };
+  }
+  if (msg.type === "interval") {
+    return { ...state, phase: "interval", rl, since, banner: null, updatedAt: now };
+  }
+  if (msg.checked.length === 0) {
+    // 進捗の心拍だけ（人がいない）
+    return { ...state, phase: "running", rl, since, updatedAt: now };
+  }
+  const round = msg.round > 0 ? msg.round : state.round + 1;
+  const { figures, counts } = judgeRound(msg.checked, msg.profiles, since);
+  const totals = {
+    checked: state.totals.checked + figures.length,
+    alive: state.totals.alive + counts.alive,
+    dormant: state.totals.dormant + counts.dormant,
+    gone: state.totals.gone + counts.gone,
+    pending: state.totals.pending + counts.pending,
+  };
+  const dropped = figures.filter((f) => f.status === "dormant").map((f) => f.handle);
+  const { banner, combo, quotaReached } = bannerFor(
+    state,
+    counts,
+    figures.length,
+    round,
+    totals.dormant,
+  );
+  return {
+    ...state,
+    phase: "running",
+    round,
+    since,
+    stage: figures,
+    pit: [...dropped.reverse(), ...state.pit].slice(0, ARENA_PIT_CAP),
+    totals,
+    lastRound: counts,
+    combo,
+    bestDormant: Math.max(state.bestDormant, counts.dormant),
+    banner,
+    rl,
+    quotaReachedAt: quotaReached ? now : state.quotaReachedAt,
+    updatedAt: now,
+  };
+}
+
+/** 次の枠までの残り。resetAt が無い／過ぎているときは 0 */
+export function countdownMs(rl: ArenaRateLimit | null, now: number = Date.now()): number {
+  if (!rl) return 0;
+  return Math.max(0, rl.resetAt - now);
+}
+
+export function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+export function quotaProgress(state: ArenaState): { done: number; quota: number; ratio: number } {
+  const quota = Math.max(0, state.quota);
+  const done = state.totals.dormant;
+  return { done, quota, ratio: quota === 0 ? 1 : Math.min(1, done / quota) };
+}
+
+/** 1ラウンドあたりの脱落人数の平均（見せ場の目安に使う） */
+export function dormantPerRound(state: ArenaState): number {
+  if (state.round === 0) return 0;
+  return state.totals.dormant / state.round;
 }
