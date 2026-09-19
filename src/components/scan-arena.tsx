@@ -52,16 +52,30 @@ function Figure({ figure }: { figure: ArenaFigure }) {
           .replace(/^tana_/, "")
           .slice(0, 1)
           .toUpperCase() || "?";
+  const showAvatar = Boolean(figure.av);
   return (
     <div
       className={cn(
-        "relative flex size-7 items-center justify-center rounded-full font-mono text-[10px] tabular-nums select-none",
+        "relative flex size-7 items-center justify-center overflow-hidden rounded-full font-mono text-[10px] tabular-nums select-none",
         FIGURE_CLASS[figure.status],
       )}
       title={`@${figure.handle} — ${LABEL[figure.status]}`}
       aria-hidden
     >
-      {initial}
+      {showAvatar ? (
+        <>
+          <img
+            src={figure.av}
+            alt=""
+            width={28}
+            height={28}
+            loading="lazy"
+            className="absolute inset-0 size-full object-cover"
+          />
+          <span className="absolute inset-0 rounded-full bg-foreground/5" />
+        </>
+      ) : null}
+      <span className={cn(showAvatar && "drop-shadow-[0_0_2px_rgba(0,0,0,0.9)]")}>{initial}</span>
       {MARK[figure.status] ? (
         <span className="absolute -top-1.5 -right-1 text-[11px] leading-none">
           {MARK[figure.status]}
