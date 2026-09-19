@@ -26,7 +26,7 @@ export const ARENA_PIT_CAP = 120;
 export const ARENA_COMBO_MIN = 10;
 
 export type FigureStatus = "waiting" | "alive" | "dormant" | "gone" | "pending";
-export type ArenaFigure = { handle: string; status: FigureStatus };
+export type ArenaFigure = { handle: string; status: FigureStatus; av?: string };
 export type ArenaPhase = "idle" | "running" | "interval" | "done";
 export type ArenaRateLimit = { remaining: number; limit: number; resetAt: number };
 export type ArenaBannerKind = "wipeout" | "combo" | "quota";
@@ -177,9 +177,11 @@ export function judgeRound(
   }
   const counts: RoundCounts = { ...ZERO_COUNTS };
   const figures = uniqueHandles(checked).map((handle) => {
-    const status = classifyRow(byKey.get(handle.toLowerCase()), sinceMs);
+    const row = byKey.get(handle.toLowerCase());
+    const status = classifyRow(row, sinceMs);
     if (status !== "waiting") counts[status] += 1;
-    return { handle, status };
+    const av = typeof row?.av === "string" ? row.av : "";
+    return { handle, status, av: av.startsWith("http") ? av : "" };
   });
   return { figures, counts };
 }
