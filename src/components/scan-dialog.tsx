@@ -126,7 +126,7 @@ export function ScanDialog({
           {arenaOn ? <ScanArena /> : null}
           {scriptOpen ? (
             <>
-              <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-muted-foreground">
+              <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-foreground/90">
                 <li>開いたXが検索結果ページか確認します（フォロー一覧ではなく）。</li>
                 <li>
                   F12 → コンソールの一番下に、command + V（Windowsは Ctrl + V）で貼って Enter。

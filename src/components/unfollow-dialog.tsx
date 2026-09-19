@@ -224,7 +224,7 @@ export function UnfollowDialog({
 
           {scriptOpen ? (
             <>
-              <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-muted-foreground">
+              <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-foreground/90">
                 <li>開いたXがフォロー一覧か確認します。</li>
                 <li>F12 → コンソールの一番下に、command + V（Windowsは Ctrl + V）で貼って Enter。</li>
                 <li>確認ダイアログで OK。タブタイトルが「外し ○人」と増えます。</li>
