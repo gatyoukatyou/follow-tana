@@ -36,7 +36,13 @@ const COLLECTOR = `(() => {
   const readExpected = () => {
     const sel = OP === "Followers" ? 'a[href$="/followers"]' : 'a[href$="/following"]';
     document.querySelectorAll(sel).forEach((a) => {
-      const t = String(a.getAttribute("title") || a.textContent || "").replace(/[,\\s]/g, "");
+      // title属性・aria-label・本文のどれに数字が来ても拾う（XのUI変更に強く）
+      const candidates = [
+        a.getAttribute("title"),
+        a.getAttribute("aria-label"),
+        a.textContent,
+      ];
+      const t = candidates.map((c) => String(c || "")).join(" ").replace(/[,\\s]/g, "");
       const m = t.match(/(\\d+)/);
       if (m) {
         const n = Number(m[1]);
@@ -169,64 +175,6 @@ const COLLECTOR = `(() => {
     else if (src.body) init.body = src.body;
     return init;
   };
-  const pageOnce = async () => {
-    const src = xhrTemplate || template;
-    if (!src || !cursor) return "no-cursor";
-    const prev = cursor;
-    let url = src.url;
-    let body = src.body && typeof src.body === "string" ? src.body : null;
-    try {
-      const u = new URL(url, location.origin);
-      if (u.searchParams.has("variables")) {
-        const vars = JSON.parse(u.searchParams.get("variables"));
-        vars.cursor = prev;
-        u.searchParams.set("variables", JSON.stringify(vars));
-        url = u.toString();
-      }
-    } catch (e) {}
-    if (body) {
-      try {
-        const b = JSON.parse(body);
-        if (b.variables) b.variables.cursor = prev;
-        body = JSON.stringify(b);
-      } catch (e) {}
-    }
-    let res;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      try { res = await orig(url, buildInit(body)); } catch (e) {
-        await sleep(2000);
-        continue;
-      }
-      if (res.status === 429) {
-        document.title = "制限待ち… " + handles.size;
-        await sleep(15000 + attempt * 5000);
-        continue;
-      }
-      if (!res.ok) {
-        await sleep(1200);
-        continue;
-      }
-      cursor = null;
-      try { absorb(await res.json()); } catch (e) { cursor = prev; return "bad-json"; }
-      report("progress");
-      if (!cursor || cursor === prev) return "end";
-      return "ok";
-    }
-    cursor = prev;
-    return "fail";
-  };
-  const replay = async () => {
-    const src0 = xhrTemplate || template; if (!src0 || !cursor) return 0;
-    let pages = 0;
-    while (pages < 800) {
-      if (await waitVisible()) continue;
-      const st = await pageOnce();
-      if (st !== "ok") break;
-      pages += 1;
-      await sleep(180);
-    }
-    return pages;
-  };
   const scrollMore = async () => {
     window.scrollTo(0, document.documentElement.scrollHeight);
     const col = document.querySelector('[data-testid="primaryColumn"]');
@@ -272,11 +220,10 @@ const COLLECTOR = `(() => {
       await scrollMore();
       await sleep(450);
     }
-    await replay();
     let idle = 0;
     let last = handles.size;
     let t0 = Date.now();
-    while (idle < 24 && Date.now() - t0 < 25 * 60 * 1000) {
+    while (idle < 24 && Date.now() - t0 < 15 * 60 * 1000) {
       if (await waitVisible()) {
         idle = 0;
         t0 = Date.now();
@@ -285,8 +232,8 @@ const COLLECTOR = `(() => {
       readExpected();
       if (expected && handles.size >= expected) break;
       await scrollMore();
-      if ((xhrTemplate || template) && cursor) await replay();
-      await sleep(700);
+      // X自身がスクロールで次ページを発行する（署名はX）。応答はXHRフックで全文読む。
+      await sleep(900);
       if (document.hidden) continue;
       if (handles.size === last) idle += 1;
       else { idle = 0; last = handles.size; report("progress"); }
@@ -298,7 +245,6 @@ const COLLECTOR = `(() => {
     // 旧v1.1 API（users/lookup・show）は消滅。最終投稿はデスクの「生存確認」（SearchTimeline方式）に一本化。
     const scanned = 0;
     const found = 0;
-    sendScan([]);
     const payload = report("done");
     const text = payload.handles.map((h) => "@" + h).join("\\n");
     try { await navigator.clipboard.writeText(text); } catch (e) {}
@@ -314,10 +260,7 @@ const COLLECTOR = `(() => {
     const note = expected && payload.handles.length < expected
       ? "（プロフィールは約" + expected + "人。足りなければ同じコードをもう一度貼ってください）"
       : "";
-    const scanNote = OP === "Following"
-      ? (found > 0 ? "最終投稿も調べました。" : (scanned > 0 ? "最終投稿はXが止めていたため取れませんでした。デスクの「生存確認」から時間をおいて調べてください。" : "最終投稿はデスクの「生存確認」から調べてください。"))
-      : "";
-    alert("フォロー棚: " + payload.handles.length + "人を取得しました。" + scanNote + note + "元のタブに戻ってください。");
+    alert("フォロー棚: " + payload.handles.length + "人を取得しました。" + note + "最終投稿はデスクの「生存確認」から調べてください。元のタブに戻ってください。");
   })();
 })();`;
 
