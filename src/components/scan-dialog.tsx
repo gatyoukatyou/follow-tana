@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Activity, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
+import { ScanArena } from "@/components/scan-arena";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useArenaPref } from "@/hooks/use-arena-pref";
 import { copyConsoleScript, downloadConsoleScript, openXListTab } from "@/lib/copy-script";
 import { scanEtaLabel } from "@/lib/filter-sort";
 import { useRoster } from "@/lib/roster-store";
@@ -36,6 +39,7 @@ export function ScanDialog({
   const setPull = useRoster((s) => s.setPull);
   const pull = useRoster((s) => s.pull);
   const [scriptOpen, setScriptOpen] = useState(false);
+  const [arenaOn, setArenaOn] = useArenaPref();
   const scriptRef = useRef<HTMLTextAreaElement>(null);
   const handles = useMemo(() => scanTargetHandles(people), [people]); // 昔フォローした人から
   const script = useMemo(() => buildScanScript(handles), [handles]);
@@ -115,6 +119,11 @@ export function ScanDialog({
                   : `${pull.count.toLocaleString("ja-JP")}人を調べ終わりました`}
             </p>
           ) : null}
+          <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            <Checkbox checked={arenaOn} onCheckedChange={setArenaOn} />
+            ゲーム表示（○×落とし穴）で待つ
+          </label>
+          {arenaOn ? <ScanArena /> : null}
           {scriptOpen ? (
             <>
               <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-muted-foreground">

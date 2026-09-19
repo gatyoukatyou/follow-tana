@@ -31,6 +31,7 @@ export const useArena = create<ArenaStore>()((set, get) => ({
     get().stopDemo();
     set({ arena: initialArenaState(), demo: true });
     stopDemoFn = playDemo((msg) => get().feed(msg), {
+      startAt: Date.now(), // 画面で見るデモは「いま」を起点にしてカウントダウンが動くようにする
       ...opts,
       onEnd: () => {
         stopDemoFn = null;
