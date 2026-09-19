@@ -36,7 +36,13 @@ const COLLECTOR = `(() => {
   const readExpected = () => {
     const sel = OP === "Followers" ? 'a[href$="/followers"]' : 'a[href$="/following"]';
     document.querySelectorAll(sel).forEach((a) => {
-      const t = String(a.getAttribute("title") || a.textContent || "").replace(/[,\\s]/g, "");
+      // title属性・aria-label・本文のどれに数字が来ても拾う（XのUI変更に強く）
+      const candidates = [
+        a.getAttribute("title"),
+        a.getAttribute("aria-label"),
+        a.textContent,
+      ];
+      const t = candidates.map((c) => String(c || "")).join(" ").replace(/[,\\s]/g, "");
       const m = t.match(/(\\d+)/);
       if (m) {
         const n = Number(m[1]);
@@ -217,7 +223,7 @@ const COLLECTOR = `(() => {
     let idle = 0;
     let last = handles.size;
     let t0 = Date.now();
-    while (idle < 24 && Date.now() - t0 < 25 * 60 * 1000) {
+    while (idle < 24 && Date.now() - t0 < 15 * 60 * 1000) {
       if (await waitVisible()) {
         idle = 0;
         t0 = Date.now();
