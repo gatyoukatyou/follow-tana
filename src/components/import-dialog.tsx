@@ -251,7 +251,7 @@ export function ImportDialog({
           ) : null}
 
           {scriptOpen ? (
-            <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-muted-foreground">
+            <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-foreground/90">
               <li>
                 開いたXのタブのアドレスが{" "}
                 <span className="font-mono text-[12px] text-foreground">
