@@ -2,10 +2,8 @@
 @import "tw-animate-css";
 
 @theme {
-  --font-sans: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans JP",
-    system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas,
-    monospace;
+  --font-sans: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
 
   --color-background: #0b0b0c;
   --color-foreground: #ecebe7;
@@ -85,4 +83,66 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ○×落とし穴（scan-arena）。reduced-motion では上の全体ルールで即時に終状態になる */
+@keyframes arena-drop {
+  0% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-4px);
+  }
+  100% {
+    transform: translateY(18px) rotate(12deg);
+    opacity: 0.45;
+  }
+}
+@keyframes arena-hop {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-8px);
+  }
+}
+@keyframes arena-poof {
+  to {
+    transform: scale(0.4);
+    opacity: 0.25;
+  }
+}
+@keyframes arena-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+@keyframes arena-wobble {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+.arena-drop {
+  animation: arena-drop 0.6s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.arena-hop {
+  animation: arena-hop 0.5s ease-out;
+}
+.arena-poof {
+  animation: arena-poof 0.5s ease-in forwards;
+}
+.arena-pulse {
+  animation: arena-pulse 1.2s ease-in-out infinite;
+}
+.arena-wobble {
+  animation: arena-wobble 1.6s ease-in-out infinite;
 }

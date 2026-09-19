@@ -76,6 +76,7 @@ import { lookupXProfiles } from "@/lib/x-lookup";
 import { useEnrich } from "@/hooks/use-enrich";
 import { useOwnerHandle } from "@/hooks/use-owner";
 import { useRosterHydrate } from "@/hooks/use-roster-hydrate";
+import { useScanArena } from "@/hooks/use-scan-arena";
 import { useXBridge } from "@/hooks/use-x-bridge";
 
 const SORT_LABEL: Record<SortKey, string> = {
@@ -275,6 +276,7 @@ export function FollowDesk() {
 
   const hydrated = useRosterHydrate(() => setOwnerOpen(true));
   useXBridge();
+  useScanArena(); // ゲーム表示用に同じ message をもう1本聞く（名簿処理は変えない）
   const { enriching, enrichDone, enrichTotal, runEnrich, stopEnrich } = useEnrich();
 
   useEffect(() => {
@@ -565,7 +567,8 @@ export function FollowDesk() {
               <>
                 <Button variant="secondary" size="sm" disabled>
                   <LoaderCircle className="size-3.5 animate-spin" />
-                  確認中 {enrichDone.toLocaleString("ja-JP")} / {enrichTotal.toLocaleString("ja-JP")}
+                  確認中 {enrichDone.toLocaleString("ja-JP")} /{" "}
+                  {enrichTotal.toLocaleString("ja-JP")}
                 </Button>
                 <Button variant="outline" size="sm" onClick={stopEnrich}>
                   停止
@@ -579,7 +582,8 @@ export function FollowDesk() {
                 onClick={() => setScanOpen(true)}
               >
                 <Activity className="size-3.5" />
-                {selected.length > 0 ? "選択を生存確認" : "生存確認"} {scanCount.toLocaleString("ja-JP")}
+                {selected.length > 0 ? "選択を生存確認" : "生存確認"}{" "}
+                {scanCount.toLocaleString("ja-JP")}
               </Button>
             )}
 
@@ -633,7 +637,8 @@ export function FollowDesk() {
                 }}
                 aria-label="表示中をすべて選択"
               />
-              表示 {visible.length.toLocaleString("ja-JP")} / {people.length.toLocaleString("ja-JP")}
+              表示 {visible.length.toLocaleString("ja-JP")} /{" "}
+              {people.length.toLocaleString("ja-JP")}
             </label>
           </div>
           {enriching ? (
@@ -659,7 +664,8 @@ export function FollowDesk() {
             </div>
           ) : stats.unknown > 0 ? (
             <p className="text-[12px] text-pretty text-muted-foreground">
-              最終投稿が未確認の {stats.unknown.toLocaleString("ja-JP")} 人です。上の「生存確認」から、Xでまとめて調べてください。待っているだけでは進みません。
+              最終投稿が未確認の {stats.unknown.toLocaleString("ja-JP")}{" "}
+              人です。上の「生存確認」から、Xでまとめて調べてください。待っているだけでは進みません。
             </p>
           ) : null}
         </div>
@@ -679,11 +685,7 @@ export function FollowDesk() {
             >
               {enriching ? "確認中" : "生存確認"}
             </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => void copyHandles(selected)}
-            >
+            <Button size="sm" variant="secondary" onClick={() => void copyHandles(selected)}>
               <Copy className="size-3.5" />
               ハンドル
             </Button>
@@ -854,7 +856,11 @@ export function FollowDesk() {
                   })();
                 }}
               >
-                {clearing ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                {clearing ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
                 消す
               </Button>
             </div>
