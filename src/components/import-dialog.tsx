@@ -345,6 +345,8 @@ export function ImportDialog({
               ファイル
               <input
                 ref={fileRef}
+                id="import-file"
+                name="import-file"
                 type="file"
                 accept=".txt,.csv,.json,.js"
                 className="mt-1 block w-full text-xs file:mr-3 file:rounded-sm file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-foreground"
