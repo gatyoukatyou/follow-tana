@@ -38,6 +38,8 @@ npm run typecheck
 | 解除コード | `src/lib/x-unfollow-script.ts` |
 | postMessage | `src/hooks/use-x-bridge.ts` |
 | 公開API予備 | `src/lib/x-lookup.ts`（遅い・欠けやすい） |
+| ゲーム表示ロジック | `src/lib/arena.ts`（postMessage 契約はファイル先頭）・`src/lib/arena-store.ts` |
+| ゲーム表示デモ | `src/lib/arena-demo.ts`（架空の `tana_*` だけ） |
 
 ## いまの既知課題
 
