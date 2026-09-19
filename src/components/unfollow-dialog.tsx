@@ -13,10 +13,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ownerListUrl } from "@/lib/owner";
+import { isAllowedXBridgeOrigin } from "@/hooks/use-x-bridge";
 import { useRoster } from "@/lib/roster-store";
 import { copyConsoleScript, downloadConsoleScript, openXListTab } from "@/lib/copy-script";
 import { buildUnfollowScript } from "@/lib/x-unfollow-script";
 import type { Person } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 const SAFE_BATCH = 60;
 
@@ -38,6 +40,9 @@ export function UnfollowDialog({
   const [cap, setCap] = useState(true);
   const [scriptOpen, setScriptOpen] = useState(false);
   const scriptRef = useRef<HTMLTextAreaElement>(null);
+  const doneSet = useMemo(() => new Set<string>(), []);
+  const failSet = useMemo(() => new Set<string>(), []);
+  const [, forceTick] = useState(0);
 
   const targets = useMemo(() => {
     const self = ownerHandle.toLowerCase();
@@ -54,10 +59,51 @@ export function UnfollowDialog({
   );
 
   useEffect(() => {
+    // Xタブの解除進捗（postMessage）を聞いて、リストの行を落としていく。
+    // use-x-bridge とは独立に同じ message を聞き、名簿側の処理は変えない。
+    function onMsg(e: MessageEvent) {
+      if (!isAllowedXBridgeOrigin(e.origin, window.location.origin)) return;
+      const d = e.data as {
+        source?: string;
+        op?: string;
+        type?: string;
+        handles?: unknown;
+        fail?: unknown;
+      };
+      if (!d || d.source !== "follow-tana" || d.op !== "Unfollow") return;
+      let changed = false;
+      if (Array.isArray(d.handles)) {
+        for (const h of d.handles) {
+          const k = String(h).replace(/^@/, "").toLowerCase();
+          if (k && !doneSet.has(k)) {
+            doneSet.add(k);
+            changed = true;
+          }
+        }
+      }
+      if (Array.isArray(d.fail)) {
+        for (const h of d.fail) {
+          const k = String(h).replace(/^@/, "").toLowerCase();
+          if (k && !failSet.has(k)) {
+            failSet.add(k);
+            changed = true;
+          }
+        }
+      }
+      if (changed) forceTick((n) => n + 1);
+    }
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, [doneSet, failSet]);
+
+  useEffect(() => {
     if (open) {
       setScriptOpen(false);
       setCap(people.length > SAFE_BATCH);
+      doneSet.clear();
+      failSet.clear();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- セットは実体不変（useMemo固定）。開き直し時のクリアのみ
   }, [open, people.length]);
 
   useEffect(() => {
@@ -101,9 +147,6 @@ export function UnfollowDialog({
   }
 
   const running = pull.kind === "unfollow" && (pull.status === "waiting" || pull.status === "running");
-  const otherBusy =
-    (pull.status === "waiting" || pull.status === "running") && pull.kind !== "unfollow";
-  const preview = targets.slice(0, 8);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -118,13 +161,26 @@ export function UnfollowDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3">
           <ul className="max-h-28 overflow-y-auto rounded-md bg-secondary px-3 py-2 font-mono text-[12px] text-foreground">
-            {preview.map((p) => (
-              <li key={p.handle}>@{p.handle}</li>
-            ))}
-            {targets.length > preview.length ? (
-              <li className="text-muted-foreground">
-                ほか {targets.length - preview.length} 人
-              </li>
+            {targets.map((p) => {
+              const doneRow = doneSet.has(p.handle.toLowerCase());
+              const failedRow = failSet.has(p.handle.toLowerCase());
+              return (
+                <li
+                  key={p.handle}
+                  className={cn(
+                    "transition-all duration-700 ease-out",
+                    doneRow && "text-muted-foreground/40 line-through decoration-destructive/60",
+                    failedRow && "text-amber-300",
+                  )}
+                >
+                  @{p.handle}
+                  {doneRow ? "  — 外した" : ""}
+                  {failedRow ? "  — 見つからず" : ""}
+                </li>
+              );
+            })}
+            {targets.length === 0 && pull.status === "running" ? (
+              <li className="text-muted-foreground">すべて処理しました</li>
             ) : null}
           </ul>
           {people.length > SAFE_BATCH ? (
@@ -151,7 +207,7 @@ export function UnfollowDialog({
             </p>
           )}
 
-          <Button onClick={() => start()} disabled={running || otherBusy || targets.length === 0}>
+          <Button onClick={() => start()} disabled={running || targets.length === 0}>
             {running ? <LoaderCircle className="size-4 animate-spin" /> : <UserMinus className="size-4" />}
             コードをコピーしてXを開く
           </Button>
