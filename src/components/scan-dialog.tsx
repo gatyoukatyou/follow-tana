@@ -15,7 +15,7 @@ import {
 import { copyConsoleScript, downloadConsoleScript, openXListTab } from "@/lib/copy-script";
 import { scanEtaLabel } from "@/lib/filter-sort";
 import { useRoster } from "@/lib/roster-store";
-import { buildScanScript } from "@/lib/x-scan-script";
+import { buildScanScript, scanTargetHandles } from "@/lib/x-scan-script";
 import type { Person } from "@/lib/types";
 
 export function ScanDialog({
@@ -37,13 +37,7 @@ export function ScanDialog({
   const pull = useRoster((s) => s.pull);
   const [scriptOpen, setScriptOpen] = useState(false);
   const scriptRef = useRef<HTMLTextAreaElement>(null);
-  const handles = useMemo(
-    () =>
-      [...people]
-        .sort((a, b) => a.addedAt - b.addedAt) // 昔フォローした人から（休眠率が高い）
-        .map((p) => p.handle),
-    [people],
-  );
+  const handles = useMemo(() => scanTargetHandles(people), [people]); // 昔フォローした人から
   const script = useMemo(() => buildScanScript(handles), [handles]);
 
   useEffect(() => {
@@ -105,7 +99,11 @@ export function ScanDialog({
             開くのは検索ページです。コードを貼ると20人ずつまとめ検索で調べ、見つかった休眠が随時棚に流れ込みます。待ち時間は外す人を選ぶ時間にしてください。
           </p>
           <Button onClick={() => start()} disabled={running || otherBusy || handles.length === 0}>
-            {running ? <LoaderCircle className="size-4 animate-spin" /> : <Activity className="size-4" />}
+            {running ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Activity className="size-4" />
+            )}
             コードをコピーしてXを開く
           </Button>
           {pull.kind === "scan" && pull.status !== "idle" ? (
@@ -121,9 +119,16 @@ export function ScanDialog({
             <>
               <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-pretty text-muted-foreground">
                 <li>開いたXが検索結果ページか確認します（フォロー一覧ではなく）。</li>
-                <li>F12 → コンソールの一番下に、command + V（Windowsは Ctrl + V）で貼って Enter。</li>
-                <li>確認ダイアログで OK。枠（50回）を約3分で使い切ると15分待ちに入ります。途中で閉じても進捗は保存済み。</li>
-                <li>終わったらこの画面に戻ると、休眠が確定しています。飽和で保留になった人は次回また調べます。</li>
+                <li>
+                  F12 → コンソールの一番下に、command + V（Windowsは Ctrl + V）で貼って Enter。
+                </li>
+                <li>
+                  確認ダイアログで
+                  OK。枠（50回）を約3分で使い切ると15分待ちに入ります。途中で閉じても進捗は保存済み。
+                </li>
+                <li>
+                  終わったらこの画面に戻ると、休眠が確定しています。飽和で保留になった人は次回また調べます。
+                </li>
               </ol>
               <Button type="button" size="sm" variant="secondary" onClick={() => void copyScript()}>
                 コードを再コピー
