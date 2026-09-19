@@ -298,7 +298,6 @@ const COLLECTOR = `(() => {
     // 旧v1.1 API（users/lookup・show）は消滅。最終投稿はデスクの「生存確認」（SearchTimeline方式）に一本化。
     const scanned = 0;
     const found = 0;
-    sendScan([]);
     const payload = report("done");
     const text = payload.handles.map((h) => "@" + h).join("\\n");
     try { await navigator.clipboard.writeText(text); } catch (e) {}
@@ -314,10 +313,7 @@ const COLLECTOR = `(() => {
     const note = expected && payload.handles.length < expected
       ? "（プロフィールは約" + expected + "人。足りなければ同じコードをもう一度貼ってください）"
       : "";
-    const scanNote = OP === "Following"
-      ? (found > 0 ? "最終投稿も調べました。" : (scanned > 0 ? "最終投稿はXが止めていたため取れませんでした。デスクの「生存確認」から時間をおいて調べてください。" : "最終投稿はデスクの「生存確認」から調べてください。"))
-      : "";
-    alert("フォロー棚: " + payload.handles.length + "人を取得しました。" + scanNote + note + "元のタブに戻ってください。");
+    alert("フォロー棚: " + payload.handles.length + "人を取得しました。" + note + "最終投稿はデスクの「生存確認」から調べてください。元のタブに戻ってください。");
   })();
 })();`;
 
