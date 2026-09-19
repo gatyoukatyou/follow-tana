@@ -1,5 +1,5 @@
 import { isValidHandle, normalizeHandle } from "@/lib/utils";
-import type { ProfileSnapshot } from "@/lib/types";
+import type { Person, ProfileSnapshot } from "@/lib/types";
 
 /**
  * 生存確認スクリプト（SearchTimeline 方式・2026-09 v4 実測に基づく）
@@ -102,15 +102,16 @@ const SCAN = `(() => {
       }
       const xhr = this;
       xhr.addEventListener("load", () => {
-        const rl = {
-          remaining: Number(xhr.getResponseHeader("x-rate-limit-remaining")),
-          limit: Number(xhr.getResponseHeader("x-rate-limit-limit")),
-          resetAt: (Number(xhr.getResponseHeader("x-rate-limit-reset")) || 0) * 1000,
+        // ヘッダが無いときは NaN（0 にすると「枠ゼロ」と誤認して待ちに入る）
+        const num = (k) => { const v = xhr.getResponseHeader(k); return v == null ? NaN : Number(v); };
+        const rlNow = {
+          remaining: num("x-rate-limit-remaining"),
+          limit: num("x-rate-limit-limit"),
+          resetAt: (num("x-rate-limit-reset") || 0) * 1000,
         };
-        if (Number.isFinite(rl.remaining) && Number.isFinite(rl.limit)) rl = rl;
         let j = null;
         try { j = JSON.parse(xhr.responseText); } catch (e) {}
-        captured.push({ rawQuery: String(vars.rawQuery || ""), status: xhr.status, rl: rl, json: j });
+        captured.push({ rawQuery: String(vars.rawQuery || ""), status: xhr.status, rl: rlNow, json: j });
       });
     }
     return XS.apply(this, arguments);
@@ -201,7 +202,7 @@ const SCAN = `(() => {
   });
 
   (async () => {
-    // 対象順は呼び出し側（デスク）が addedAt 降順で並べて渡す。組に分ける。
+    // 対象順は呼び出し側（デスク）が scanTargetHandles で「昔フォローした人から」に並べて渡す。組に分ける。
     let queue = handles.slice();
     const GROUP = 20;
     let framesUsed = 0;
@@ -238,8 +239,9 @@ const SCAN = `(() => {
         }
         continue;
       }
+      timeoutGroups = 0;
       const rlNow = cap.rl;
-      if (Number.isFinite(rlNow.remaining)) rl = rlNow;
+      if (Number.isFinite(rlNow.remaining) && Number.isFinite(rlNow.limit)) rl = rlNow;
       const s = summarize(group, tweetsOf(cap.json));
       const profiles = [];
       for (const h of s.found) {
@@ -257,7 +259,7 @@ const SCAN = `(() => {
         // 飽和＝判定保留。次の組として組み直して再検索（カーソル追尾はしない）
         queue = s.missing.concat(queue);
       }
-      done += group.length;
+      done += profiles.length;
       send("progress", profiles, group, rl);
       await sleep(3000);
     }
@@ -341,6 +343,15 @@ export function parseScanProfiles(raw: unknown): ProfileSnapshot[] {
     if (snap) out.push(snap);
   }
   return out;
+}
+
+/**
+ * 生存確認の対象順：昔フォローした人から（休眠率が高い順）。
+ * 取込は X のフォロー一覧（最近フォローした人が先頭）の順に addedAt = now + i を付けるので、
+ * 同じ取込の中では addedAt が大きいほど昔フォローした人。
+ */
+export function scanTargetHandles(people: Pick<Person, "handle" | "addedAt">[]): string[] {
+  return [...people].sort((a, b) => b.addedAt - a.addedAt).map((p) => p.handle);
 }
 
 export function buildScanScript(handles: string[]): string {
