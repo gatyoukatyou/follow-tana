@@ -28,6 +28,7 @@ export function useXBridge() {
         count?: number;
         scanned?: number;
         expected?: number;
+        rl?: { remaining?: number; limit?: number; resetAt?: number };
       };
       if (!d || d.source !== "follow-tana") return;
       if (!isAllowedXBridgeOrigin(e.origin, window.location.origin)) return;
@@ -38,8 +39,9 @@ export function useXBridge() {
         if (snaps.length) s.mergeProfiles(snaps);
         const n = Number(d.count) || snaps.length;
         const exp = Number(d.expected) || 0;
+        const isInterval = d.type === "interval";
         s.setPull({
-          status: d.type === "done" ? "done" : "running",
+          status: d.type === "done" ? "done" : isInterval ? "idle" : "running",
           kind: "scan",
           count: n,
         });
@@ -57,6 +59,12 @@ export function useXBridge() {
               { id: "x-scan" },
             );
           }
+        } else if (isInterval) {
+          // 枠回復待ち。この間は外す操作に進んでよい（待ち＝選ぶ時間の設計）
+          toast.message(
+            `検索枠を使い切りました（${(d.rl?.limit ?? 50).toLocaleString("ja-JP")}回/15分）。${n.toLocaleString("ja-JP")}人まで調べました。この間に外す人を選んでください。`,
+            { id: "x-scan", duration: 10_000 },
+          );
         } else {
           toast.loading(
             exp > 0
