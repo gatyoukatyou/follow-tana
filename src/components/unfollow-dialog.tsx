@@ -186,6 +186,8 @@ export function UnfollowDialog({
           {people.length > SAFE_BATCH ? (
             <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <input
+                id="unfollow-cap"
+                name="unfollow-cap"
                 type="checkbox"
                 checked={cap}
                 onChange={(e) => {
