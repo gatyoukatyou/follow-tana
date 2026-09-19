@@ -38,10 +38,19 @@ describe("buildScanScript", () => {
     expect(s).toContain('op: "Scan"');
   });
 
-  it("一括全滅時は個別取得に切り替える", () => {
+  it("まとめ検索方式の実装要素を含む", () => {
     const s = buildScanScript(["alice"]);
-    expect(s).toContain("consecutiveGone");
-    expect(s).toContain("bulkDead");
+    expect(s).toContain("XMLHttpRequest");
+    expect(s).toContain("pushState");
+    expect(s).toContain("include:nativeretweets");
+    expect(s).toContain("nativeretweets");
+    expect(s).toContain("since:");
+  });
+
+  it("飽和時は組み直して再検索する", () => {
+    const s = buildScanScript(["alice"]);
+    expect(s).toContain("saturated");
+    expect(s).toContain("queue");
   });
 
   it("生成コードは構文として壊れていない", () => {
