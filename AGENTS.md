@@ -11,6 +11,7 @@
 - UI 文言は日本語。見本データは架空の `tana_*` だけ。
 - オーナーハンドルは Zustand に入れない。`src/lib/owner.ts` の localStorage。
 - X の取得・生存確認・フォロー解除は、ログイン中の X タブで動くコンソールスクリプト。サーバから X を叩かない。
+- MCP (`scripts/mcp-server.mjs`) はデスク側の状態読み・コード生成補助のみ。X の API を叩かない。貼り付け・confirm は人間が行う。
 - `lookupFailed`（停止）は、削除・凍結が確認できたときだけ。調べ損ね・タイムアウト・空レスは未確認のまま。
 - 停止が名簿の 35% 超なら `repairMassFalseDead` が未確認に戻す。この安全弁を外さない。
 
