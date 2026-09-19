@@ -169,64 +169,6 @@ const COLLECTOR = `(() => {
     else if (src.body) init.body = src.body;
     return init;
   };
-  const pageOnce = async () => {
-    const src = xhrTemplate || template;
-    if (!src || !cursor) return "no-cursor";
-    const prev = cursor;
-    let url = src.url;
-    let body = src.body && typeof src.body === "string" ? src.body : null;
-    try {
-      const u = new URL(url, location.origin);
-      if (u.searchParams.has("variables")) {
-        const vars = JSON.parse(u.searchParams.get("variables"));
-        vars.cursor = prev;
-        u.searchParams.set("variables", JSON.stringify(vars));
-        url = u.toString();
-      }
-    } catch (e) {}
-    if (body) {
-      try {
-        const b = JSON.parse(body);
-        if (b.variables) b.variables.cursor = prev;
-        body = JSON.stringify(b);
-      } catch (e) {}
-    }
-    let res;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      try { res = await orig(url, buildInit(body)); } catch (e) {
-        await sleep(2000);
-        continue;
-      }
-      if (res.status === 429) {
-        document.title = "制限待ち… " + handles.size;
-        await sleep(15000 + attempt * 5000);
-        continue;
-      }
-      if (!res.ok) {
-        await sleep(1200);
-        continue;
-      }
-      cursor = null;
-      try { absorb(await res.json()); } catch (e) { cursor = prev; return "bad-json"; }
-      report("progress");
-      if (!cursor || cursor === prev) return "end";
-      return "ok";
-    }
-    cursor = prev;
-    return "fail";
-  };
-  const replay = async () => {
-    const src0 = xhrTemplate || template; if (!src0 || !cursor) return 0;
-    let pages = 0;
-    while (pages < 800) {
-      if (await waitVisible()) continue;
-      const st = await pageOnce();
-      if (st !== "ok") break;
-      pages += 1;
-      await sleep(180);
-    }
-    return pages;
-  };
   const scrollMore = async () => {
     window.scrollTo(0, document.documentElement.scrollHeight);
     const col = document.querySelector('[data-testid="primaryColumn"]');
@@ -272,7 +214,6 @@ const COLLECTOR = `(() => {
       await scrollMore();
       await sleep(450);
     }
-    await replay();
     let idle = 0;
     let last = handles.size;
     let t0 = Date.now();
@@ -285,8 +226,8 @@ const COLLECTOR = `(() => {
       readExpected();
       if (expected && handles.size >= expected) break;
       await scrollMore();
-      if ((xhrTemplate || template) && cursor) await replay();
-      await sleep(700);
+      // X自身がスクロールで次ページを発行する（署名はX）。応答はXHRフックで全文読む。
+      await sleep(900);
       if (document.hidden) continue;
       if (handles.size === last) idle += 1;
       else { idle = 0; last = handles.size; report("progress"); }
