@@ -253,6 +253,34 @@ describe("applyScanMessage", () => {
     expect(quotaProgress(s)).toEqual({ done: 60, quota: 30, ratio: 1 });
   });
 
+  it("ノルマは脱落＋消失で数える", () => {
+    const c = handles(20);
+    let s = initialArenaState(25);
+    s = applyScanMessage(
+      s,
+      progress(1, c, [
+        ...c.slice(0, 15).map((h) => ({ h, lp: SINCE_MS - DAY })),
+        ...c.slice(15, 20).map((h) => ({ h, gone: true })),
+      ]),
+      1,
+    );
+    expect(quotaProgress(s)).toEqual({ done: 20, quota: 25, ratio: 0.8 });
+    expect(s.quotaReachedAt).toBeNull();
+    const d = handles(20, "tana_d");
+    s = applyScanMessage(
+      s,
+      progress(
+        2,
+        d,
+        d.slice(0, 5).map((h) => ({ h, lp: SINCE_MS - DAY })),
+      ),
+      2,
+    );
+    expect(quotaProgress(s).done).toBe(25);
+    expect(s.banner).toEqual({ kind: "quota", round: 2 });
+    expect(s.quotaReachedAt).toBe(2);
+  });
+
   it("ピットは上限で切る", () => {
     let s = initialArenaState();
     for (let r = 1; r <= 10; r++) {

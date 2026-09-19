@@ -18,7 +18,7 @@ import type { ScanRow } from "@/lib/x-scan-script";
  */
 
 export const ARENA_ROUND_SIZE = 20;
-/** 1日の解除目安（README の約400人）をゲームの「ノルマ」にする */
+/** 1日の解除目安（README の約400人）をゲームの「ノルマ」にする。脱落＋消失（外し候補の蓄積）で数える */
 export const ARENA_QUOTA = 400;
 /** ピットに残す駒の上限（DOM を軽く保つ） */
 export const ARENA_PIT_CAP = 120;
@@ -189,10 +189,10 @@ function bannerFor(
   counts: RoundCounts,
   roundSize: number,
   round: number,
-  totalDormant: number,
+  candidates: number,
 ): { banner: ArenaBanner; combo: number; quotaReached: boolean } {
   const combo = counts.dormant >= ARENA_COMBO_MIN ? prev.combo + 1 : 0;
-  const quotaReached = prev.quotaReachedAt == null && prev.quota > 0 && totalDormant >= prev.quota;
+  const quotaReached = prev.quotaReachedAt == null && prev.quota > 0 && candidates >= prev.quota;
   if (quotaReached) return { banner: { kind: "quota", round }, combo, quotaReached };
   const wipeout = roundSize >= ARENA_ROUND_SIZE / 2 && counts.dormant + counts.gone === roundSize;
   if (wipeout) return { banner: { kind: "wipeout", round }, combo, quotaReached };
@@ -232,7 +232,7 @@ export function applyScanMessage(
     counts,
     figures.length,
     round,
-    totals.dormant,
+    totals.dormant + totals.gone,
   );
   return {
     ...state,
@@ -265,9 +265,10 @@ export function formatCountdown(ms: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+/** ノルマの進み。脱落＋消失＝外し候補として積み上がった人数 */
 export function quotaProgress(state: ArenaState): { done: number; quota: number; ratio: number } {
   const quota = Math.max(0, state.quota);
-  const done = state.totals.dormant;
+  const done = state.totals.dormant + state.totals.gone;
   return { done, quota, ratio: quota === 0 ? 1 : Math.min(1, done / quota) };
 }
 
