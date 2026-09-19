@@ -209,7 +209,7 @@ export function ImportDialog({
           <DialogTitle>名簿を取り込む</DialogTitle>
           <DialogDescription>
             {kind === "following"
-              ? "Xから一括で取るか、書き出したJSONの控えを戻します。Xから取る場合は、名簿のあと続けて最終投稿も調べます。人数が多いと数分かかります。終わると完了の案内が出ます。"
+              ? "Xから一括で取るか、書き出したJSONの控えを戻します。取込は名簿だけ。最終投稿は取込後にデスクの「生存確認」（まとめ検索方式）で調べます。人数が多いと数分かかります。"
               : "Xのフォロワー一覧でコードを貼り、棚の人と照合して相互を付けます。"}
           </DialogDescription>
         </DialogHeader>
