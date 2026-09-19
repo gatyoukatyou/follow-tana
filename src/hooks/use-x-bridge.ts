@@ -147,7 +147,7 @@ export function useXBridge() {
       if (snaps.length) s.mergeProfiles(snaps);
       s.setPull({ status: "done", kind: "following", count: handles.length });
       toast.success(
-        `${handles.length}人を取り込み、${added}人を追加しました。最終投稿も同じコードで調べ済みです。未確認が残れば「生存確認」を押してください。`,
+        `${handles.length}人を取り込み、${added}人を追加しました。最終投稿はデスクの「生存確認」から調べてください。`,
         { id: "x-pull" },
       );
     }

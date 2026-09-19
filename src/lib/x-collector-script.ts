@@ -108,12 +108,47 @@ const COLLECTOR = `(() => {
     if (u.indexOf("/" + OP) !== -1) return true;
     return body.indexOf('"operationName":"' + OP + '"') !== -1;
   };
+  // ---- XHR フック（v4実測：Xの通信は全てXHR。fetchフックは一度も捕まえられない） ----
+  // Following/Followers の UserBy 通信を全文で読み、template も XHR 型から奪う。
+  let xhrTemplate = null;
+  let fetchTemplate = null;
+  const XO = XMLHttpRequest.prototype.open, XS = XMLHttpRequest.prototype.send, XH = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.open = function (method, url) {
+    this.__ft = { url: String(url || ""), headers: {} };
+    return XO.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
+    if (this.__ft) this.__ft.headers[String(k).toLowerCase()] = String(v);
+    return XH.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function () {
+    const ft = this.__ft;
+    if (ft && (ft.url.indexOf("/" + OP) !== -1)) {
+      const xhr = this;
+      if (!xhrTemplate && !new URL(ft.url, location.origin).searchParams.get("cursor")) {
+        // 型（GET + ヘッダ + variables）を奪う。cursor 無しの1ページ目のみ。
+        try {
+          xhrTemplate = {
+            url: ft.url,
+            headers: Object.assign({}, ft.headers),
+          };
+          console.log("フォロー棚: XHR型を捕捉しました", ft.url.slice(0, 120));
+        } catch (e) {}
+      }
+      xhr.addEventListener("load", () => {
+        try { absorb(JSON.parse(xhr.responseText)); report("progress"); } catch (e) {}
+      });
+    }
+    return XS.apply(this, arguments);
+  };
+  const restore = () => { XMLHttpRequest.prototype.open = XO; XMLHttpRequest.prototype.send = XS; XMLHttpRequest.prototype.setRequestHeader = XH; };
+  // fetchフックも併用（Xの実装が戻る場合に備えて）。
   const orig = window.fetch;
   window.fetch = async function (input, init) {
     const url = typeof input === "string" ? input : (input && input.url) || "";
     const hit = isHit(url, init);
-    if (hit) {
-      template = { url: url, method: (init && init.method) || "GET", headers: init && init.headers, body: init && init.body };
+    if (hit && !fetchTemplate) {
+      fetchTemplate = { url: url, method: (init && init.method) || "GET", headers: init && init.headers, body: init && init.body };
     }
     const res = await orig.apply(this, arguments);
     if (hit) {
@@ -125,19 +160,21 @@ const COLLECTOR = `(() => {
   fromDom();
   report("progress");
   const buildInit = (body) => {
-    const h = new Headers(template.headers || undefined);
+    const src = xhrTemplate || template;
+    const h = new Headers(src.headers || undefined);
     const ct0 = cookie("ct0");
     if (ct0) h.set("x-csrf-token", ct0);
-    const init = { credentials: "include", method: template.method || "GET", headers: h };
+    const init = { credentials: "include", method: (src.method || "GET"), headers: h };
     if (body) init.body = body;
-    else if (template.body) init.body = template.body;
+    else if (src.body) init.body = src.body;
     return init;
   };
   const pageOnce = async () => {
-    if (!template || !cursor) return "no-cursor";
+    const src = xhrTemplate || template;
+    if (!src || !cursor) return "no-cursor";
     const prev = cursor;
-    let url = template.url;
-    let body = template.body && typeof template.body === "string" ? template.body : null;
+    let url = src.url;
+    let body = src.body && typeof src.body === "string" ? src.body : null;
     try {
       const u = new URL(url, location.origin);
       if (u.searchParams.has("variables")) {
@@ -179,7 +216,7 @@ const COLLECTOR = `(() => {
     return "fail";
   };
   const replay = async () => {
-    if (!template || !cursor) return 0;
+    const src0 = xhrTemplate || template; if (!src0 || !cursor) return 0;
     let pages = 0;
     while (pages < 800) {
       if (await waitVisible()) continue;
@@ -227,156 +264,10 @@ const COLLECTOR = `(() => {
       lt: lt,
     };
   };
-  const scanLastPosts = async () => {
-    if (OP !== "Following") return { scanned: 0, found: 0 };
-    const all = list();
-    if (all.length === 0) return { scanned: 0, found: 0 };
-    const BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
-    const headers = () => ({
-      authorization: BEARER,
-      "x-csrf-token": cookie("ct0"),
-      "x-twitter-auth-type": "OAuth2Session",
-      "x-twitter-active-user": "yes",
-    });
-    let scanned = 0;
-    let found = 0;
-    let bulkDead = false;
-    const sendScan = (profiles) => {
-      const payload = {
-        source: "follow-tana",
-        type: "progress",
-        op: OP,
-        stage: "scan",
-        handles: scanned === 0 ? all : [],
-        profiles: profiles || [],
-        count: all.length,
-        scanned: scanned,
-        expected: expected,
-      };
-      try { if (window.opener) window.opener.postMessage(payload, "*"); } catch (e) {}
-      document.title = "確認 " + scanned + "/" + all.length + "人";
-    };
-    const lookup = async (chunk) => {
-      const q = encodeURIComponent(chunk.join(","));
-      const hdr = headers();
-      const getUrl = "https://x.com/i/api/1.1/users/lookup.json?include_entities=false&screen_name=" + q;
-      let res = await orig(getUrl, { method: "GET", credentials: "include", headers: hdr });
-      if (res.status === 429) {
-        document.title = "制限待ち… 確認 " + scanned + "/" + all.length;
-        await sleep(20000);
-        res = await orig(getUrl, { method: "GET", credentials: "include", headers: hdr });
-      }
-      if (res.status === 401 || res.status === 403) return { status: res.status, list: null };
-      if (res.ok) {
-        try {
-          const body = await res.json();
-          if (Array.isArray(body)) return { status: res.status, list: body };
-        } catch (e) {}
-      }
-      res = await orig("https://x.com/i/api/1.1/users/lookup.json", {
-        method: "POST",
-        credentials: "include",
-        headers: Object.assign({}, hdr, { "content-type": "application/x-www-form-urlencoded" }),
-        body: "include_entities=false&screen_name=" + q,
-      });
-      if (res.status === 429) {
-        await sleep(20000);
-        return { status: 429, list: null };
-      }
-      if (res.status === 401 || res.status === 403) return { status: res.status, list: null };
-      if (!res.ok) return { status: res.status, list: null };
-      try {
-        const body = await res.json();
-        return { status: res.status, list: Array.isArray(body) ? body : null };
-      } catch (e) {
-        return { status: res.status, list: null };
-      }
-    };
-    const showOne = async (h) => {
-      const url = "https://x.com/i/api/1.1/users/show.json?screen_name=" + encodeURIComponent(h);
-      let res = await orig(url, { method: "GET", credentials: "include", headers: headers() });
-      if (res.status === 429) {
-        await sleep(20000);
-        res = await orig(url, { method: "GET", credentials: "include", headers: headers() });
-      }
-      if (res.status === 404) return { gone: true, h: h };
-      if (!res.ok) return null;
-      try {
-        const u = await res.json();
-        if (u && Array.isArray(u.errors)) {
-          const code = u.errors[0] && u.errors[0].code;
-          if (code === 50 || code === 63 || code === 34) return { gone: true, h: h };
-          return null;
-        }
-        if (u && (u.screen_name || u.id_str)) return rowOf(u);
-      } catch (e) {}
-      return null;
-    };
-    sendScan([]);
-    const BATCH = 20;
-    for (let i = 0; i < all.length; i += BATCH) {
-      await waitVisible();
-      const chunk = all.slice(i, i + BATCH);
-      try {
-        const got = await lookup(chunk);
-        if (got.status === 401 || got.status === 403) {
-          alert("フォロー棚: 名簿は取れましたが、最終投稿の一括取得をXが拒みました。デスクの「生存確認」からもう一度調べてください。");
-          return { scanned: scanned, found: found };
-        }
-        const profiles = [];
-        if (got.list) {
-          const seen = {};
-          got.list.forEach((u) => {
-            const row = rowOf(u);
-            if (!row.h) return;
-            seen[row.h.toLowerCase()] = 1;
-            profiles.push(row);
-          });
-          const missing = chunk.filter((h) => !seen[h.toLowerCase()]);
-          if (missing.length && missing.length <= 5) {
-            for (let m = 0; m < missing.length; m++) {
-              const one = await showOne(missing[m]);
-              if (one && one.gone) profiles.push({ h: missing[m], gone: true });
-              else if (one && one.h) profiles.push(one);
-              await sleep(250);
-            }
-          }
-        } else if (!bulkDead && got.status !== 429) {
-          // 一括取得が死んでいる場合は1人ずつ調べる。制限中は叩かない。
-          const base = profiles.length;
-          let consecutiveGone = 0;
-          for (let m = 0; m < chunk.length; m++) {
-            await waitVisible();
-            const one = await showOne(chunk[m]);
-            if (one && one.gone) {
-              consecutiveGone += 1;
-              profiles.push({ h: chunk[m], gone: true });
-              if (consecutiveGone >= 5) {
-                // 連続で消えている＝個別取得自体が死んでいる可能性。誤って停止にしない。
-                profiles.length = base;
-                bulkDead = true;
-                break;
-              }
-            } else {
-              consecutiveGone = 0;
-              if (one && one.h) profiles.push(one);
-            }
-            await sleep(300);
-          }
-        }
-        found += profiles.length;
-        scanned += chunk.length;
-        sendScan(profiles);
-      } catch (e) {
-        scanned += chunk.length;
-        sendScan([]);
-      }
-      await sleep(800);
-    }
-    return { scanned: scanned, found: found };
-  };
+  // （scanLastPosts は旧v1.1 API依存のため削除。最終投稿はデスクの「生存確認」に一本化）
+
   (async () => {
-    for (let i = 0; i < 20 && !template; i++) {
+    for (let i = 0; i < 20 && !(xhrTemplate || template); i++) {
       await waitVisible();
       await scrollMore();
       await sleep(450);
@@ -394,7 +285,7 @@ const COLLECTOR = `(() => {
       readExpected();
       if (expected && handles.size >= expected) break;
       await scrollMore();
-      if (template && cursor) await replay();
+      if ((xhrTemplate || template) && cursor) await replay();
       await sleep(700);
       if (document.hidden) continue;
       if (handles.size === last) idle += 1;
@@ -404,9 +295,10 @@ const COLLECTOR = `(() => {
     fromDom();
     readExpected();
     report("progress");
-    const gotScan = await scanLastPosts();
-    const scanned = gotScan.scanned;
-    const found = gotScan.found;
+    // 旧v1.1 API（users/lookup・show）は消滅。最終投稿はデスクの「生存確認」（SearchTimeline方式）に一本化。
+    const scanned = 0;
+    const found = 0;
+    sendScan([]);
     const payload = report("done");
     const text = payload.handles.map((h) => "@" + h).join("\\n");
     try { await navigator.clipboard.writeText(text); } catch (e) {}
@@ -418,6 +310,7 @@ const COLLECTOR = `(() => {
       a.click();
     } catch (e) {}
     window.fetch = orig;
+    restore();
     const note = expected && payload.handles.length < expected
       ? "（プロフィールは約" + expected + "人。足りなければ同じコードをもう一度貼ってください）"
       : "";
