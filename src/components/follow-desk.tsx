@@ -337,26 +337,20 @@ export function FollowDesk() {
   }
 
   function toggleActivity(value: ActivityKind) {
+    // 生存系の絞り込みは外し候補とも併用できる（「外し候補×休眠」「外し候補×一方」など）
     setFilter({
       activity: filters.activity === value ? "any" : value,
-      unfollowQueue: false,
     });
   }
 
   function toggleRelation(value: Relation) {
     setFilter({
       relation: filters.relation === value ? "any" : value,
-      unfollowQueue: false,
     });
   }
 
   function toggleQueue() {
-    const next = !filters.unfollowQueue;
-    setFilter({
-      unfollowQueue: next,
-      activity: "any",
-      relation: "any",
-    });
+    setFilter({ unfollowQueue: !filters.unfollowQueue });
   }
 
   if (!hydrated) {
